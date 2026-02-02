@@ -1,0 +1,9 @@
+.venv/
+# Ignore all __pycache__ directories recursively
+**/__pycache__/
+*.py[cod]
+*$py.class
+.hpm/
+dist/
+build/
+*.egg-info/
