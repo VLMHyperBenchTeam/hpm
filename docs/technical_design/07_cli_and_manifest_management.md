@@ -1,111 +1,56 @@
-# Technical Design: CLI & Manifest Management Architecture
+# Technical Design: HSM CLI & Manifest Management Architecture
 
-**Status**: Draft
-**Date**: 2026-02-02
+**Статус**: Accepted
+**Дата**: 2026-02-03
 
 ## 1. Обзор
 
-Этот документ описывает архитектуру CLI для управления реестром и конфигурацией проекта, основываясь на лучших практиках 2025-2026 годов (Declarative configuration, Interactive DX, Observability).
+Этот документ описывает архитектуру CLI для **Hyper Stack Manager (hsm)**, ориентированную на декларативное управление конфигурацией и четкое разделение между операциями с глобальным реестром и локальным состоянием проекта.
 
 ## 2. Принципы
 
-1.  **Декларативность + Императивность**:
-    *   Основной источник правды — файлы (`registry/**/*.yaml`, `pyproject.toml`).
-    *   CLI-команды — это удобные обертки (shortcuts) для редактирования этих файлов.
-2.  **Прозрачность (Observability)**:
-    *   Пользователь всегда должен видеть, что происходит с его конфигурацией.
-    *   Команды типа `list`, `show`, `diff` обязательны.
-3.  **Валидация на лету**:
-    *   Любое изменение конфигурации должно проверяться на корректность до применения (`check`/`dry-run`).
+1.  **Declarative Intent (hsm.yaml)**:
+    *   Файл `hsm.yaml` является единственным источником правды (Single Source of Truth) для желаемого состояния проекта.
+    *   Команды CLI — это прежде всего инструменты для редактирования этого манифеста.
+2.  **Atomic Reconciliation (Sync)**:
+    *   Изменения применяются транзакционно через команду `hsm sync`.
+    *   Если адаптер (например, `uv`) сообщает об ошибке, артефакты проекта (`pyproject.toml`) остаются неизменными.
+3.  **Round-Trip Editing**:
+    *   Использование `ruamel.yaml` гарантирует сохранение комментариев и форматирования пользователя в `hsm.yaml` при редактировании через CLI.
 
-## 3. Управление Реестром (`hpm registry`)
+## 3. Структура CLI
 
-Реестр — это набор YAML-файлов. Ручное редактирование возможно, но чревато ошибками.
+CLI организован в логические группы для разделения функций "Исследования" (Discovery) и "Управления" (Management).
 
-### 3.1. Добавление пакета (`hpm registry add`)
-Интерактивный визард для создания нового манифеста пакета.
+### 3.1. Управление проектом (Top Level)
+Команды, управляющие локальным состоянием и жизненным циклом проекта.
+*   `hsm init`: Инициализация нового проекта и создание `hsm.yaml`.
+*   `hsm sync`: Материализация манифеста в специфичные для окружения артефакты.
+*   `hsm check`: Валидация манифеста относительно реестра без применения изменений.
+*   `hsm list`: Отображение текущего стека проекта (активные группы, пакеты и режимы).
 
-**Workflow:**
-1.  `hpm registry add package`
-2.  Prompt: "Package Name?" -> `my-lib`
-3.  Prompt: "Source Type?" -> `[Git / Local / PyPI]`
-4.  Prompt (if Git): "Repo URL?" -> `https://github.com/...`
-5.  Prompt: "Version?" -> `1.0.0`
-6.  **Результат**: Создается файл `registry/packages/my-lib.yaml`.
+### 3.2. Редактирование манифеста (hsm add/remove)
+Ярлыки (shortcuts) для модификации файла `hsm.yaml`.
+*   `hsm add <name>`: Добавление отдельного компонента.
+*   `hsm add group <name> --option <opt>`: Добавление компонента в конкретную группу.
+*   `hsm mode <name> <dev|prod>`: Переключение режима работы компонента.
 
-### 3.2. Добавление группы (`hpm registry add group`)
-Визард для создания новой группы.
+### 3.3. Глобальный реестр (hsm registry)
+Команды для взаимодействия с глобальной базой компонентов.
+*   `hsm registry search <query>`: Поиск компонентов по всем категориям.
+*   `hsm registry show <name>`: Просмотр детальных метаданных компонента.
+*   `hsm registry list`: Отображение дерева всех доступных компонентов в реестре.
 
-**Workflow:**
-1.  `hpm registry add group`
-2.  Prompt: "Group Name?" -> `inference`
-3.  Prompt: "Strategy?" -> `[1-of-N / M-of-N]`
-4.  Prompt: "Select Options?" -> (Список доступных пакетов из реестра)
-5.  **Результат**: Создается файл `registry/groups/inference.yaml`.
+## 4. Структура Реестра (Registry Layout)
 
-### 3.3. Валидация (`hpm registry validate`)
-Проверяет целостность реестра:
-*   Все ссылки в группах ведут на существующие пакеты.
-*   YAML валиден согласно схемам Pydantic.
+Реестр разделен на специализированные директории для обработки различных типов компонентов:
+*   `packages/`: Манифесты Python-пакетов.
+*   `containers/`: Манифесты Docker-контейнеров.
+*   `package_groups/`: Группы выбора для Python-пакетов.
+*   `container_groups/`: Группы выбора для Docker-сервисов.
 
-## 4. Управление Проектом (`hpm project` / `hpm group`)
+## 5. Стратегия реализации
 
-Конфигурация проекта живет в `pyproject.toml`.
-
-### 4.1. Просмотр состояния (`hpm list`)
-Выводит дерево текущей конфигурации с типами групп.
-
-**Пример вывода:**
-```text
-Project: vlmhyperbench
-├── Groups
-│   ├── inference (1-of-N)
-│   │   └── vlm-adapter-qwen (active)
-│   └── metrics (M-of-N)
-│       ├── accuracy (active)
-│       └── latency (active)
-└── Dependencies
-    └── (Managed by uv)
-```
-
-### 4.2. Детали группы (`hpm show <group>`)
-Показывает доступные опции для группы.
-
-**Пример вывода:**
-```text
-Group: inference
-Strategy: 1-of-N (Select one)
-Description: Backend for VLM inference.
-
-Options:
-  * vlm-adapter-qwen (Installed) - Adapter for Qwen-VL
-    vlm-adapter-deepseek       - Adapter for DeepSeek-VL
-    vllm-backend               - High-performance vLLM backend
-```
-
-### 4.3. Поиск (`hpm search <query>`)
-Поиск по реестру. Ищет в названиях групп, пакетов и описаниях.
-
-## 5. Взаимодействие с `pyproject.toml`
-
-Мы поддерживаем два режима работы:
-
-1.  **Human-Edit (Декларативный)**:
-    *   Пользователь открывает `pyproject.toml` в IDE.
-    *   Правит секцию `[tool.hpm.groups]`.
-    *   Запускает `hpm sync`.
-    *   *Плюс*: Полный контроль, привычно для GitOps.
-
-2.  **CLI-Edit (Императивный)**:
-    *   Пользователь запускает `hpm group add inference --option vllm`.
-    *   HPM валидирует ввод.
-    *   HPM обновляет `pyproject.toml`.
-    *   HPM запускает `sync` (опционально или автоматически).
-    *   *Плюс*: Быстро, меньше ошибок в названиях.
-
-## 6. План реализации (Next Steps)
-
-1.  Реализовать **Discovery Commands**: `hpm list`, `hpm show`, `hpm search`.
-    *   Это закроет потребность в "наблюдаемости".
-2.  Реализовать **Registry Management**: `hpm registry add`.
-    *   Это упростит наполнение реестра.
+1.  **Manifest Engine**: Реализован на базе `ruamel.yaml` для надежной работы с YAML.
+2.  **Adapter Pattern**: Отделяет логику HSM от специфики инструментов, таких как `uv` или `docker compose`.
+3.  **Rich UI**: Использование библиотеки `rich` для наглядной визуализации в терминале.

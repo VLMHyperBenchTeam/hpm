@@ -7,32 +7,41 @@ class GroupOption(BaseModel):
 
 class RegistryGroup(BaseModel):
     name: str
-    type: Literal["group"] = "group"
+    type: Literal["package_group", "container_group"]
     strategy: Literal["1-of-N", "M-of-N"]
     options: List[GroupOption]
     default: Optional[List[str]] = None
+    comment: Optional[str] = None
 
 class Source(BaseModel):
-    type: str  # "git", "local", "pypi"
+    type: str  # "git", "local", "pypi", "docker-image"
     url: Optional[str] = None
     ref: Optional[str] = None
     path: Optional[str] = None
     editable: bool = False
     subdirectory: Optional[str] = None
+    image: Optional[str] = None
 
 class ManifestSources(BaseModel):
     prod: Optional[Source] = None
     dev: Optional[Source] = None
 
-class HPMDependency(BaseModel):
+class HSMDependency(BaseModel):
     name: str
     version: str = "*"
 
-class Manifest(BaseModel):
+class PackageManifest(BaseModel):
     name: str
     version: str
     description: Optional[str] = None
-    type: str = "library"  # "library", "service", "virtual"
+    type: Literal["library", "service", "virtual"] = "library"
     sources: ManifestSources
-    dependencies: List[Union[str, HPMDependency]] = Field(default_factory=list)
+    dependencies: List[Union[str, HSMDependency]] = Field(default_factory=list)
     entrypoints: Dict[str, str] = Field(default_factory=dict)
+
+class ContainerManifest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    type: Literal["container"] = "container"
+    orchestration: Dict[str, Union[str, List[str]]] = Field(default_factory=dict)
+    sources: ManifestSources
