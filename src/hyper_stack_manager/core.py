@@ -68,7 +68,7 @@ class HSMCore:
         """
         logger.info("Starting HSM sync...")
         
-        packages_to_sync = []
+        packages_to_sync = {} # Use dict to ensure uniqueness by name
         containers_to_sync = []
         
         # 1. Resolve packages from groups
@@ -82,13 +82,13 @@ class HSMCore:
             for pkg_name in selections:
                 pkg_req = self._resolve_package_requirement(pkg_name)
                 if pkg_req:
-                    packages_to_sync.append(pkg_req)
+                    packages_to_sync[pkg_name] = pkg_req
 
         # 2. Resolve standalone packages
         for pkg_name in self.manifest.packages:
             pkg_req = self._resolve_package_requirement(pkg_name)
             if pkg_req:
-                packages_to_sync.append(pkg_req)
+                packages_to_sync[pkg_name] = pkg_req
 
         # 3. Resolve containers from groups
         container_groups = self.manifest.data.get("services", {}).get("container_groups", {})
@@ -111,7 +111,7 @@ class HSMCore:
 
         # 5. Delegate to adapter for packages
         if packages_to_sync:
-            self.adapter.sync(packages_to_sync, frozen=frozen)
+            self.adapter.sync(list(packages_to_sync.values()), frozen=frozen)
         
         # 6. Generate docker-compose.hsm.yml
         if containers_to_sync:
@@ -138,15 +138,19 @@ class HSMCore:
             data = yaml.safe_load(f)
             manifest = PackageManifest(**data)
         
-        # For now, we use 'prod' source by default
-        source = manifest.sources.prod
+        mode = self.manifest.get_package_mode(name)
+        source = manifest.sources.dev if mode == "dev" and manifest.sources.dev else manifest.sources.prod
+        
         if not source:
             return None
 
         if source.type == "local":
-            return str(self.project_root / source.path)
+            path = Path(source.path)
+            if not path.is_absolute():
+                path = self.project_root / path
+            return f"{name} @ {path.as_uri()}"
         elif source.type == "git":
-            req = f"git+{source.url}"
+            req = f"{name} @ git+{source.url}"
             if source.ref:
                 req += f"@{source.ref}"
             return req
@@ -254,23 +258,30 @@ class HSMCore:
         logger.info(f"Set mode for package {name} to {mode}")
 
     def set_global_mode(self, mode: str):
-        """Set the mode for all packages in the project.
+        """Set the mode for all packages and containers in the project.
 
         Args:
             mode: Mode ('dev' or 'prod').
         """
         # 1. Standalone packages
         for pkg in self.manifest.packages:
-            self.manifest.set_package_mode(pkg, mode)
+            name = pkg.get("name") if isinstance(pkg, dict) else pkg
+            self.manifest.set_package_mode(name, mode)
         
-        # 2. Group packages
-        for group_name, group_cfg in self.manifest.package_groups.items():
-            selection = group_cfg.get("selection")
-            if isinstance(selection, str):
-                self.manifest.set_package_mode(selection, mode)
-            elif isinstance(selection, list):
-                for pkg in selection:
-                    self.manifest.set_package_mode(pkg, mode)
+        # 2. Package groups
+        for group_name in self.manifest.package_groups:
+            self.manifest.set_package_mode(group_name, mode)
+
+        # 3. Container groups
+        container_groups = self.manifest.data.get("services", {}).get("container_groups", {})
+        for group_name in container_groups:
+            self.manifest.set_package_mode(group_name, mode)
+
+        # 4. Standalone containers
+        standalone_containers = self.manifest.data.get("services", {}).get("containers", [])
+        for cont in standalone_containers:
+            name = cont.get("name") if isinstance(cont, dict) else cont
+            self.manifest.set_package_mode(name, mode)
         
         self.manifest.save()
         logger.info(f"Set global project mode to {mode}")

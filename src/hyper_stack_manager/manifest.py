@@ -184,19 +184,83 @@ class HSMProjectManifest:
             groups.yaml_set_comment_before_after_key(group_name, before=comment)
 
     def set_package_mode(self, name: str, mode: str):
-        """Set the mode (dev/prod) for a package in the manifest.
+        """Set the mode (dev/prod) for a package or group in the manifest.
 
         Args:
-            name: Package name.
+            name: Component or group name.
             mode: Mode ('dev' or 'prod').
         """
-        # This assumes a structure where packages can have modes.
-        # For now, let's store it in a 'modes' section or similar if needed,
-        # or just update the package entry if it's a dict.
-        # HSM specification says hsm.yaml tracks intent.
+        # 1. Check package groups
+        groups = self.data.get("dependencies", {}).get("package_groups", {})
+        if name in groups:
+            groups[name]["mode"] = mode
+            return
+
+        # 2. Check standalone packages
+        pkgs = self.data.get("dependencies", {}).get("packages", [])
+        for i, pkg in enumerate(pkgs):
+            if isinstance(pkg, str) and pkg == name:
+                pkgs[i] = {"name": name, "mode": mode}
+                return
+            elif isinstance(pkg, dict) and pkg.get("name") == name:
+                pkg["mode"] = mode
+                return
+
+        # 3. Check container groups
+        c_groups = self.data.get("services", {}).get("container_groups", {})
+        if name in c_groups:
+            c_groups[name]["mode"] = mode
+            return
+
+        # 4. Check standalone containers
+        containers = self.data.get("services", {}).get("containers", [])
+        for i, cont in enumerate(containers):
+            if isinstance(cont, str) and cont == name:
+                containers[i] = {"name": name, "mode": mode}
+                return
+            elif isinstance(cont, dict) and cont.get("name") == name:
+                cont["mode"] = mode
+                return
+        
+        # Fallback: store in a generic modes section if not found in structure
         modes = self.data.setdefault("modes", {})
         modes[name] = mode
 
     def get_package_mode(self, name: str) -> str:
-        """Get the mode for a package. Defaults to 'prod'."""
+        """Get the mode for a package or group. Defaults to 'prod'."""
+        # 1. Check package groups
+        groups = self.data.get("dependencies", {}).get("package_groups", {})
+        if name in groups and "mode" in groups[name]:
+            return groups[name]["mode"]
+        
+        # Check if name is a selection in any package group
+        for g_cfg in groups.values():
+            selection = g_cfg.get("selection")
+            if selection == name or (isinstance(selection, (list, tuple)) and name in selection):
+                return g_cfg.get("mode", "prod")
+
+        # 2. Check standalone packages
+        pkgs = self.data.get("dependencies", {}).get("packages", [])
+        for pkg in pkgs:
+            if isinstance(pkg, dict) and pkg.get("name") == name:
+                return pkg.get("mode", "prod")
+
+        # 3. Check container groups
+        c_groups = self.data.get("services", {}).get("container_groups", {})
+        if name in c_groups and "mode" in c_groups[name]:
+            return c_groups[name]["mode"]
+            
+        # Check if name is a selection in any container group
+        for g_cfg in c_groups.values():
+            selection = g_cfg.get("selection")
+            if selection == name or (isinstance(selection, (list, tuple)) and name in selection):
+                return g_cfg.get("mode", "prod")
+
+        # 4. Check standalone containers
+        containers = self.data.get("services", {}).get("containers", [])
+        for cont in containers:
+            if isinstance(cont, dict) and cont.get("name") == name:
+                return cont.get("mode", "prod")
+
+        # 5. Check generic modes section
         return self.data.get("modes", {}).get(name, "prod")

@@ -56,6 +56,44 @@ app.add_typer(container_app, name="container")
 python_manager_app = typer.Typer(help="Manage python package manager settings")
 app.add_typer(python_manager_app, name="python-manager")
 
+# --- Autocompletion Helpers ---
+
+def complete_registry_packages(ctx: typer.Context, incomplete: str):
+    registry_path = Path("hsm-registry")
+    if not registry_path.exists(): return []
+    return [p.stem for p in registry_path.glob("packages/*.yaml") if p.stem.startswith(incomplete)]
+
+def complete_registry_groups(ctx: typer.Context, incomplete: str):
+    registry_path = Path("hsm-registry")
+    if not registry_path.exists(): return []
+    groups = []
+    for p in registry_path.glob("package_groups/*.yaml"):
+        if p.stem.startswith(incomplete): groups.append(p.stem)
+    for p in registry_path.glob("container_groups/*.yaml"):
+        if p.stem.startswith(incomplete): groups.append(p.stem)
+    return groups
+
+def complete_registry_containers(ctx: typer.Context, incomplete: str):
+    registry_path = Path("hsm-registry")
+    if not registry_path.exists(): return []
+    return [p.stem for p in registry_path.glob("containers/*.yaml") if p.stem.startswith(incomplete)]
+
+def complete_project_packages(ctx: typer.Context, incomplete: str):
+    hsm = HSMCore()
+    return [p for p in hsm.manifest.packages if p.startswith(incomplete)]
+
+def complete_project_groups(ctx: typer.Context, incomplete: str):
+    hsm = HSMCore()
+    groups = list(hsm.manifest.package_groups.keys())
+    container_groups = hsm.manifest.data.get("services", {}).get("container_groups", {})
+    groups.extend(container_groups.keys())
+    return [g for g in groups if g.startswith(incomplete)]
+
+def complete_project_containers(ctx: typer.Context, incomplete: str):
+    hsm = HSMCore()
+    containers = hsm.manifest.data.get("services", {}).get("containers", [])
+    return [c for c in containers if c.startswith(incomplete)]
+
 # --- Registry Top-Level Commands ---
 
 @registry_app.command(name="search")
@@ -167,7 +205,7 @@ def registry_package_add(
 
 @registry_package_app.command(name="remove")
 def registry_package_remove(
-    name: str = typer.Argument(..., help="Package name to remove"),
+    name: str = typer.Argument(..., help="Package name to remove", autocompletion=complete_registry_packages),
     yes: bool = typer.Option(False, "--yes", "-y", help="Confirm without prompt"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
@@ -227,7 +265,7 @@ def registry_group_add(
 
 @registry_group_app.command(name="remove")
 def registry_group_remove(
-    name: str = typer.Argument(..., help="Group name to remove"),
+    name: str = typer.Argument(..., help="Group name to remove", autocompletion=complete_registry_groups),
     yes: bool = typer.Option(False, "--yes", "-y", help="Confirm without prompt"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
@@ -244,7 +282,7 @@ def registry_group_remove(
 
 @registry_group_app.command(name="add-option")
 def registry_group_add_option(
-    group: str = typer.Argument(..., help="Group name"),
+    group: str = typer.Argument(..., help="Group name", autocompletion=complete_registry_groups),
     option: str = typer.Argument(..., help="Option name to add"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
@@ -259,7 +297,7 @@ def registry_group_add_option(
 
 @registry_group_app.command(name="remove-option")
 def registry_group_remove_option(
-    group: str = typer.Argument(..., help="Group name"),
+    group: str = typer.Argument(..., help="Group name", autocompletion=complete_registry_groups),
     option: str = typer.Argument(..., help="Option name to remove"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
@@ -329,7 +367,7 @@ def registry_container_add(
 
 @registry_container_app.command(name="remove")
 def registry_container_remove(
-    name: str = typer.Argument(..., help="Container name to remove"),
+    name: str = typer.Argument(..., help="Container name to remove", autocompletion=complete_registry_containers),
     yes: bool = typer.Option(False, "--yes", "-y"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
@@ -372,22 +410,62 @@ def sync(
         console.print(f"[red]Sync failed: {e}[/red]")
         raise typer.Exit(code=1)
 
-@app.command()
-def list():
+@app.command(name="list")
+def cli_list():
     """Show current project stack."""
     hsm = HSMCore()
     manifest = hsm.manifest
     tree = Tree(f"[bold blue]Project: {manifest.data.get('project', {}).get('name', 'unknown')}[/bold blue]")
-    deps = tree.add("Dependencies")
-    groups = deps.add("Groups")
+    
+    def get_mode_str(name: str):
+        mode = manifest.get_package_mode(name)
+        icon = "🛠️ " if mode == "dev" else "📦"
+        return f"[dim]({mode} {icon})[/dim]"
+
+    # 1. Dependencies (Packages)
+    deps = tree.add("Dependencies (Packages)")
+    
+    # Groups
+    groups_node = deps.add("Groups")
     for g_name, group_cfg in manifest.package_groups.items():
         selection = group_cfg.get("selection", "none")
         strategy = group_cfg.get("strategy", "unknown")
-        groups.add(f"{g_name} [dim]({strategy})[/dim]: [green]{selection}[/green]")
-    pkgs = deps.add("Standalone Packages")
+        g_node = groups_node.add(f"{g_name} [dim]({strategy})[/dim]")
+        if isinstance(selection, (list, tuple)):
+            for s in selection:
+                g_node.add(f"[green]{s}[/green] {get_mode_str(s)}")
+        else:
+            g_node.add(f"[green]{selection}[/green] {get_mode_str(selection)}")
+            
+    # Standalone
+    pkgs_node = deps.add("Standalone")
     for p in manifest.packages:
-        mode = manifest.get_package_mode(p)
-        pkgs.add(f"{p} [dim]({mode})[/dim]")
+        name = p.get("name") if isinstance(p, dict) else p
+        pkgs_node.add(f"{name} {get_mode_str(name)}")
+
+    # 2. Services (Containers)
+    services = tree.add("Services (Containers)")
+    
+    # Groups
+    c_groups_data = manifest.data.get("services", {}).get("container_groups", {})
+    c_groups_node = services.add("Groups")
+    for g_name, group_cfg in c_groups_data.items():
+        selection = group_cfg.get("selection", "none")
+        strategy = group_cfg.get("strategy", "unknown")
+        g_node = c_groups_node.add(f"{g_name} [dim]({strategy})[/dim]")
+        if isinstance(selection, (list, tuple)):
+            for s in selection:
+                g_node.add(f"[green]{s}[/green] {get_mode_str(s)}")
+        else:
+            g_node.add(f"[green]{selection}[/green] {get_mode_str(selection)}")
+            
+    # Standalone
+    containers_data = manifest.data.get("services", {}).get("containers", [])
+    containers_node = services.add("Standalone")
+    for c in containers_data:
+        name = c.get("name") if isinstance(c, dict) else c
+        containers_node.add(f"{name} {get_mode_str(name)}")
+
     console.print(tree)
 
 @app.command()
@@ -407,7 +485,7 @@ def mode(
 
 @package_app.command(name="add")
 def project_package_add(
-    name: str = typer.Argument(..., help="Package name"),
+    name: str = typer.Argument(..., help="Package name", autocompletion=complete_registry_packages),
     group: Optional[str] = typer.Option(None, "--group", "-g"),
 ):
     """Add a package to the project."""
@@ -471,7 +549,7 @@ def project_group_add(
 
 @group_app.command(name="remove")
 def project_group_remove(
-    name: str = typer.Argument(..., help="Group name"),
+    name: str = typer.Argument(..., help="Group name", autocompletion=complete_project_groups),
 ):
     """Remove a group from the project."""
     hsm = HSMCore()
@@ -484,7 +562,7 @@ def project_group_remove(
 
 @group_app.command(name="add-option")
 def project_group_add_option(
-    group: str = typer.Argument(..., help="Group name"),
+    group: str = typer.Argument(..., help="Group name", autocompletion=complete_project_groups),
     option: str = typer.Argument(..., help="Option name"),
 ):
     """Add an option to a project group."""
@@ -498,7 +576,7 @@ def project_group_add_option(
 
 @group_app.command(name="remove-option")
 def project_group_remove_option(
-    group: str = typer.Argument(..., help="Group name"),
+    group: str = typer.Argument(..., help="Group name", autocompletion=complete_project_groups),
     option: str = typer.Argument(..., help="Option name"),
 ):
     """Remove an option from a project group."""
@@ -506,6 +584,62 @@ def project_group_remove_option(
     try:
         hsm.remove_group_option(group, option)
         console.print(f"[green]Removed option '{option}' from group '{group}'. Run 'hsm sync' to apply.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+# --- Project Container Commands ---
+
+@container_app.command(name="add")
+def project_container_add(
+    name: str = typer.Argument(..., help="Container name", autocompletion=complete_registry_containers),
+    group: Optional[str] = typer.Option(None, "--group", "-g"),
+):
+    """Add a container to the project."""
+    hsm = HSMCore()
+    try:
+        if group:
+            hsm.add_package_group(group, name) # Reusing add_package_group as it handles both types
+        else:
+            # TODO: Implement add_standalone_container in core if needed,
+            # currently manifest supports standalone containers in services.containers
+            # For now, let's assume we add it to a default group or standalone list
+            # But core.py doesn't have add_container method for project yet.
+            # Let's implement a basic add_container to manifest in core or reuse logic.
+            # For MVP, let's just warn or use a default group.
+            console.print("[yellow]Adding standalone containers is not fully supported yet. Please use groups.[/yellow]")
+            # hsm.add_container(name)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@container_app.command(name="remove")
+def project_container_remove(
+    name: str = typer.Argument(..., help="Container name", autocompletion=complete_project_containers),
+    group: Optional[str] = typer.Option(None, "--group", "-g"),
+):
+    """Remove a container from the project."""
+    hsm = HSMCore()
+    try:
+        if group:
+            hsm.remove_package_group(group, name)
+        else:
+             # hsm.remove_container(name)
+             console.print("[yellow]Removing standalone containers is not fully supported yet.[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@container_app.command(name="mode")
+def project_container_mode(
+    name: str = typer.Argument(..., help="Container name", autocompletion=complete_project_containers),
+    mode: str = typer.Argument(..., help="Mode (dev/prod)"),
+):
+    """Set mode for a specific container."""
+    hsm = HSMCore()
+    try:
+        hsm.set_package_mode(name, mode) # Reusing set_package_mode as it sets mode by name
+        console.print(f"[green]Mode for '{name}' set to {mode}. Run 'hsm sync' to apply.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
