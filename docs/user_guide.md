@@ -10,13 +10,20 @@ project:
   name: "my-rag-app"
 
 # Группы Python-пакетов
-package_groups:
-  vector-db: "qdrant-adapter"
-  llm-provider: "ollama-adapter"
+dependencies:
+  package_groups:
+    vector-db:
+      strategy: 1-of-N
+      selection: qdrant-adapter
+      mode: dev
 
 # Группы Docker-сервисов
-container_groups:
-  infra: ["postgres", "redis"]
+services:
+  container_groups:
+    infra:
+      strategy: M-of-N
+      selection: ["postgres", "redis"]
+      mode: prod
 ```
 
 ## 2. Команды управления проектом
@@ -44,9 +51,16 @@ hsm add group vector-db --option qdrant-adapter # Добавит в группу
 ```
 
 ### hsm mode
-Переключает компонент между режимами `dev` и `prod`.
+Глобальное переключение режима для всего проекта.
 ```bash
-hsm mode qdrant-adapter dev
+hsm mode dev
+```
+
+### hsm package mode / hsm container mode
+Атомарное переключение режима для конкретного пакета или сервиса.
+```bash
+hsm package mode qdrant-adapter dev
+hsm container mode postgres prod
 ```
 
 ## 4. Работа с Реестром

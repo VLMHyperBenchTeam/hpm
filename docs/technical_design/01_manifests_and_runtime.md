@@ -21,17 +21,19 @@ dependencies:
     vector-db-client:
       strategy: "1-of-N"
       selection: "qdrant-adapter"
+      mode: "dev"
   packages:
-    - "langchain>=0.1.0"
+    - name: "langchain"
+      version: ">=0.1.0"
+      mode: "prod"
 
 services:
   container_groups:
     # Group for vector database servers
     vector-db-server:
       strategy: "1-of-N"
-      container_name: "vector-db" # Persistent name for the container
-      alias: "db-host"            # Network alias (defaults to container_name)
       selection: "qdrant"
+      mode: "prod"
 ```
 
 #### Работа с комментариями
