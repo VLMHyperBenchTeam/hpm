@@ -132,6 +132,60 @@ class HSMCore:
         
         return None
 
+    def set_python_manager(self, manager_name: str):
+        """Set the python package manager for the project.
+
+        Args:
+            manager_name: Name of the manager (e.g., 'uv').
+        """
+        self.manifest.set_manager(manager_name)
+        self.manifest.save()
+        logger.info(f"Set python package manager to {manager_name}")
+
+    def set_registry_path(self, path: str):
+        """Set the path to the global registry.
+
+        Args:
+            path: Path to the registry.
+        """
+        # This might need to be stored in a user config or project manifest
+        # For now, let's assume we update the instance and maybe save to manifest if desired
+        self.registry_path = Path(path)
+        logger.info(f"Registry path set to {path}")
+
+    def set_package_mode(self, name: str, mode: str):
+        """Set the mode for a specific package.
+
+        Args:
+            name: Package name.
+            mode: Mode ('dev' or 'prod').
+        """
+        self.manifest.set_package_mode(name, mode)
+        self.manifest.save()
+        logger.info(f"Set mode for package {name} to {mode}")
+
+    def set_global_mode(self, mode: str):
+        """Set the mode for all packages in the project.
+
+        Args:
+            mode: Mode ('dev' or 'prod').
+        """
+        # 1. Standalone packages
+        for pkg in self.manifest.packages:
+            self.manifest.set_package_mode(pkg, mode)
+        
+        # 2. Group packages
+        for group_name, group_cfg in self.manifest.package_groups.items():
+            selection = group_cfg.get("selection")
+            if isinstance(selection, str):
+                self.manifest.set_package_mode(selection, mode)
+            elif isinstance(selection, list):
+                for pkg in selection:
+                    self.manifest.set_package_mode(pkg, mode)
+        
+        self.manifest.save()
+        logger.info(f"Set global project mode to {mode}")
+
     def add_package(self, name: str):
         """Add a standalone package to the manifest.
 
@@ -163,6 +217,16 @@ class HSMCore:
         self.manifest.save()
         logger.info(f"Removed {option} from group {group_name} in hsm.yaml")
 
+    def remove_group(self, group_name: str):
+        """Remove a package group from the project manifest.
+
+        Args:
+            group_name: Name of the group.
+        """
+        self.manifest.remove_group(group_name)
+        self.manifest.save()
+        logger.info(f"Removed group {group_name} from hsm.yaml")
+
     def add_package_group(self, group_name: str, option: str):
         """Add a package group selection to the manifest.
 
@@ -189,6 +253,37 @@ class HSMCore:
         )
         self.manifest.save()
         logger.info(f"Added group {group_name} with selection {option} to hsm.yaml")
+
+    def add_group_option(self, group_name: str, option: str):
+        """Add an option to a group in the project manifest.
+
+        Args:
+            group_name: Name of the group.
+            option: Option name to add.
+        """
+        # Load group from registry to get strategy
+        group_path = self.registry_path / "package_groups" / f"{group_name}.yaml"
+        if not group_path.exists():
+            raise FileNotFoundError(f"Group {group_name} not found in registry")
+            
+        with open(group_path, "r") as f:
+            data = yaml.safe_load(f)
+            strategy = data.get("strategy", "1-of-N")
+
+        self.manifest.add_option_to_group(group_name, option, strategy)
+        self.manifest.save()
+        logger.info(f"Added option {option} to group {group_name} in hsm.yaml")
+
+    def remove_group_option(self, group_name: str, option: str):
+        """Remove an option from a group in the project manifest.
+
+        Args:
+            group_name: Name of the group.
+            option: Option name to remove.
+        """
+        self.manifest.remove_from_group(group_name, option)
+        self.manifest.save()
+        logger.info(f"Removed option {option} from group {group_name} in hsm.yaml")
 
     def search_registry(self, query: str) -> Dict[str, List[str]]:
         """Search the registry for components.
@@ -241,6 +336,102 @@ class HSMCore:
             yaml.dump(manifest_data, f, sort_keys=False)
         
         logger.info(f"Package '{name}' added to registry at {manifest_file}")
+
+    def add_group_to_registry(self, name: str, group_type: str, strategy: str, options: List[str],
+                             description: Optional[str] = None, comment: Optional[str] = None):
+        """Add a group manifest to the registry.
+
+        Args:
+            name: Group name.
+            group_type: Type of group (package_group or container_group).
+            strategy: Selection strategy (1-of-N or M-of-N).
+            options: List of option names (package or container names).
+            description: Optional description.
+            comment: Optional comment for the manifest.
+        """
+        category = "package_groups" if group_type == "package_group" else "container_groups"
+        groups_dir = self.registry_path / category
+        groups_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest_data = {
+            "name": name,
+            "type": group_type,
+            "strategy": strategy,
+            "options": [{"name": opt} for opt in options],
+        }
+        if description:
+            manifest_data["description"] = description
+        if comment:
+            manifest_data["comment"] = comment
+
+        manifest_file = groups_dir / f"{name}.yaml"
+        with open(manifest_file, "w") as f:
+            yaml.dump(manifest_data, f, sort_keys=False)
+        
+        logger.info(f"Group '{name}' added to registry at {manifest_file}")
+
+    def remove_from_registry(self, name: str):
+        """Remove a component (package, container, or group) from the registry.
+
+        Args:
+            name: Component name.
+        """
+        found = False
+        for category in ["packages", "containers", "package_groups", "container_groups"]:
+            path = self.registry_path / category / f"{name}.yaml"
+            if path.exists():
+                path.unlink()
+                logger.info(f"Removed {name} from registry ({category})")
+                found = True
+        
+        if not found:
+            raise FileNotFoundError(f"Component '{name}' not found in registry")
+
+    def add_option_to_registry_group(self, group_name: str, option: str):
+        """Add an option to a group in the registry.
+
+        Args:
+            group_name: Name of the group.
+            option: Option name to add.
+        """
+        # Try both package and container groups
+        for category in ["package_groups", "container_groups"]:
+            path = self.registry_path / category / f"{group_name}.yaml"
+            if path.exists():
+                with open(path, "r") as f:
+                    data = yaml.safe_load(f)
+                
+                options = data.setdefault("options", [])
+                if not any(opt.get("name") == option for opt in options):
+                    options.append({"name": option})
+                    with open(path, "w") as f:
+                        yaml.dump(data, f, sort_keys=False)
+                    logger.info(f"Added option {option} to group {group_name} in registry")
+                return
+        raise FileNotFoundError(f"Group {group_name} not found in registry")
+
+    def remove_option_from_registry_group(self, group_name: str, option: str):
+        """Remove an option from a group in the registry.
+
+        Args:
+            group_name: Name of the group.
+            option: Option name to remove.
+        """
+        for category in ["package_groups", "container_groups"]:
+            path = self.registry_path / category / f"{group_name}.yaml"
+            if path.exists():
+                with open(path, "r") as f:
+                    data = yaml.safe_load(f)
+                
+                options = data.get("options", [])
+                new_options = [opt for opt in options if opt.get("name") != option]
+                if len(new_options) != len(options):
+                    data["options"] = new_options
+                    with open(path, "w") as f:
+                        yaml.dump(data, f, sort_keys=False)
+                    logger.info(f"Removed option {option} from group {group_name} in registry")
+                return
+        raise FileNotFoundError(f"Group {group_name} not found in registry")
 
     def get_component_details(self, name: str) -> Optional[Dict[str, Any]]:
         """Get detailed metadata for a component from the registry.

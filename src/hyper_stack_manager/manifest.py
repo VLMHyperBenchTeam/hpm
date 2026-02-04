@@ -61,6 +61,15 @@ class HSMProjectManifest:
         """
         return self.data.get("dependencies", {}).get("package_groups", {})
 
+    def set_manager(self, manager_name: str):
+        """Set the package manager for the project.
+
+        Args:
+            manager_name: Name of the manager (e.g., 'uv').
+        """
+        deps = self.data.setdefault("dependencies", {})
+        deps["package_manager"] = manager_name
+
     @property
     def packages(self) -> List[str]:
         """Get the list of standalone packages.
@@ -113,6 +122,41 @@ class HSMProjectManifest:
             # For now, we just clear it or remove the group entry
             del groups[group_name]
 
+    def remove_group(self, group_name: str):
+        """Remove a package group entirely from the manifest.
+
+        Args:
+            group_name: Name of the group.
+        """
+        groups = self.data.get("dependencies", {}).get("package_groups", {})
+        if group_name in groups:
+            del groups[group_name]
+
+    def add_option_to_group(self, group_name: str, option: str, strategy: str):
+        """Add or set an option in a package group.
+
+        Args:
+            group_name: Name of the group.
+            option: Option name to add/set.
+            strategy: Group strategy (1-of-N or M-of-N).
+        """
+        deps = self.data.setdefault("dependencies", {})
+        groups = deps.setdefault("package_groups", {})
+        
+        group_cfg = groups.setdefault(group_name, {"strategy": strategy, "selection": None})
+        
+        if strategy == "1-of-N":
+            group_cfg["selection"] = option
+        else:
+            selection = group_cfg.get("selection")
+            if selection is None:
+                group_cfg["selection"] = [option]
+            elif isinstance(selection, str):
+                group_cfg["selection"] = [selection, option]
+            elif isinstance(selection, list):
+                if option not in selection:
+                    selection.append(option)
+
     def set_package_group(
         self,
         group_name: str,
@@ -137,5 +181,22 @@ class HSMProjectManifest:
 
         if comment:
             # Add comment using ruamel.yaml API
-            # Note: This is a simplified way to add a comment above a key
             groups.yaml_set_comment_before_after_key(group_name, before=comment)
+
+    def set_package_mode(self, name: str, mode: str):
+        """Set the mode (dev/prod) for a package in the manifest.
+
+        Args:
+            name: Package name.
+            mode: Mode ('dev' or 'prod').
+        """
+        # This assumes a structure where packages can have modes.
+        # For now, let's store it in a 'modes' section or similar if needed,
+        # or just update the package entry if it's a dict.
+        # HSM specification says hsm.yaml tracks intent.
+        modes = self.data.setdefault("modes", {})
+        modes[name] = mode
+
+    def get_package_mode(self, name: str) -> str:
+        """Get the mode for a package. Defaults to 'prod'."""
+        return self.data.get("modes", {}).get(name, "prod")

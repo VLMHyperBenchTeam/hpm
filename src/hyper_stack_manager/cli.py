@@ -1,5 +1,6 @@
 import typer
 import logging
+import yaml
 from pathlib import Path
 from typing import Optional, List, Dict
 from rich.console import Console
@@ -22,13 +23,34 @@ logger = logging.getLogger("hsm")
 console = Console()
 
 app = typer.Typer(
-    help="Hyper Stack Manager (hsm) CLI",
+    help="Hyper Stack Manager (hsm) CLI - Modern Environment Orchestrator",
     add_completion=True
 )
 
-# --- Registry Subgroup ---
+# --- Registry Subgroups ---
 registry_app = typer.Typer(help="Manage the HSM global registry")
 app.add_typer(registry_app, name="registry")
+
+registry_package_app = typer.Typer(help="Manage packages in the registry")
+registry_app.add_typer(registry_package_app, name="package")
+
+registry_group_app = typer.Typer(help="Manage groups in the registry")
+registry_app.add_typer(registry_group_app, name="group")
+
+registry_path_app = typer.Typer(help="Manage registry path configuration")
+registry_app.add_typer(registry_path_app, name="path")
+
+# --- Project Subgroups ---
+package_app = typer.Typer(help="Manage packages in the current project")
+app.add_typer(package_app, name="package")
+
+group_app = typer.Typer(help="Manage groups in the current project")
+app.add_typer(group_app, name="group")
+
+python_manager_app = typer.Typer(help="Manage python package manager settings")
+app.add_typer(python_manager_app, name="python-manager")
+
+# --- Registry Top-Level Commands ---
 
 @registry_app.command(name="search")
 def registry_search(
@@ -77,90 +99,163 @@ def registry_show(
         raise typer.Exit(code=1)
         
     console.print(f"[bold blue]Component: {name}[/bold blue]")
-    import yaml
     console.print(yaml.dump(details, sort_keys=False))
 
-@registry_app.command(name="add")
-def registry_add(
-    name: Optional[str] = typer.Argument(None, help="Name of the package"),
-    version: Optional[str] = typer.Option(None, "--version", "-v", help="Package version"),
-    description: Optional[str] = typer.Option(None, "--description", "-d", help="Package description"),
-    prod_type: Optional[str] = typer.Option(None, "--prod-type", help="Production source type (git/pypi)"),
-    prod_url: Optional[str] = typer.Option(None, "--prod-url", help="Production source URL"),
-    prod_ref: Optional[str] = typer.Option(None, "--prod-ref", help="Production source ref (tag/branch)"),
-    dev_path: Optional[str] = typer.Option(None, "--dev-path", help="Development local path"),
-    registry: Optional[Path] = typer.Option(None, "--registry", "-r", help="Path to the registry"),
+# --- Registry Path Commands ---
+
+@registry_path_app.command(name="set")
+def registry_path_set(
+    path: str = typer.Argument(..., help="Path to the registry directory"),
 ):
-    """Add a new package to the registry with interactive wizard support."""
+    """Set the global registry path."""
+    hsm = HSMCore()
+    hsm.set_registry_path(path)
+    console.print(f"[green]Registry path set to {path}[/green]")
+
+# --- Registry Package Commands ---
+
+@registry_package_app.command(name="add")
+def registry_package_add(
+    name: Optional[str] = typer.Argument(None, help="Package name"),
+    version: Optional[str] = typer.Option(None, "--version", "-v"),
+    description: Optional[str] = typer.Option(None, "--description", "-d"),
+    prod_type: Optional[str] = typer.Option(None, "--prod-type"),
+    prod_url: Optional[str] = typer.Option(None, "--prod-url"),
+    dev_path: Optional[str] = typer.Option(None, "--dev-path"),
+    registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
+):
+    """Add a new package to the registry (Interactive Wizard supported)."""
     hsm = HSMCore(registry_path=registry)
-    
     try:
-        # Interactive Wizard if arguments are missing
         if name is None:
             name = pt_prompt("Package Name: ")
             if not name:
-                console.print("[red]Package name is required[/red]")
-                raise typer.Exit(code=1)
-
+                raise typer.Exit(1)
         if version is None:
             version = pt_prompt("Version: ", default="0.1.0")
-
         if description is None:
             description = pt_prompt("Description: ")
-
         if prod_type is None:
-            type_completer = WordCompleter(["git", "pypi"], ignore_case=True)
-            prod_type = pt_prompt("Production Source Type (git/pypi): ", completer=type_completer, default="git")
-
+            prod_type = pt_prompt("Prod Type (git/pypi): ", completer=WordCompleter(["git", "pypi"]), default="git")
         if prod_url is None:
-            if prod_type == "git":
-                prod_url = pt_prompt("Git URL: ")
-            else:
-                prod_url = pt_prompt("PyPI Package Name: ")
-            
-            if not prod_url:
-                console.print("[red]Production URL/Name is required[/red]")
-                raise typer.Exit(code=1)
-
-        if prod_type == "git" and prod_ref is None:
-            prod_ref = pt_prompt("Git Ref (tag/branch/commit) [optional]: ")
-
+            prod_url = pt_prompt("Prod URL/Name: ")
         if dev_path is None:
-            path_completer = PathCompleter(only_directories=True, expanduser=True)
-            dev_path = pt_prompt("Development Local Path [optional]: ", completer=path_completer)
+            dev_path = pt_prompt("Dev Path [optional]: ", completer=PathCompleter(only_directories=True))
 
-        # Prepare sources
         prod_source = {"type": prod_type, "url" if prod_type == "git" else "name": prod_url}
-        if prod_type == "git" and prod_ref:
-            prod_source["ref"] = prod_ref
+        dev_source = {"type": "local", "path": dev_path, "editable": True} if dev_path else None
 
-        dev_source = None
-        if dev_path:
-            dev_source = {
-                "type": "local",
-                "path": dev_path,
-                "editable": True
-            }
-
-        hsm.add_package_to_registry(
-            name=name,
-            version=version,
-            description=description,
-            prod_source=prod_source,
-            dev_source=dev_source
-        )
-        console.print(f"[green]Successfully added package '{name}' to registry.[/green]")
+        hsm.add_package_to_registry(name, version, description, prod_source, dev_source)
+        console.print(f"[green]Package '{name}' added to registry.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-# --- Project Commands (Top Level) ---
+@registry_package_app.command(name="remove")
+def registry_package_remove(
+    name: str = typer.Argument(..., help="Package name to remove"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm without prompt"),
+    registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
+):
+    """Remove a package from the registry."""
+    if not yes and not typer.confirm(f"Are you sure you want to remove package '{name}' from registry?"):
+        raise typer.Abort()
+    hsm = HSMCore(registry_path=registry)
+    try:
+        hsm.remove_from_registry(name)
+        console.print(f"[green]Package '{name}' removed from registry.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+# --- Registry Group Commands ---
+
+@registry_group_app.command(name="add")
+def registry_group_add(
+    name: Optional[str] = typer.Argument(None, help="Group name"),
+    group_type: Optional[str] = typer.Option(None, "--type", "-t"),
+    strategy: Optional[str] = typer.Option(None, "--strategy", "-s"),
+    options: Optional[List[str]] = typer.Option(None, "--option", "-o"),
+    description: Optional[str] = typer.Option(None, "--description", "-d"),
+    registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
+):
+    """Add a new group to the registry."""
+    hsm = HSMCore(registry_path=registry)
+    try:
+        if name is None: name = pt_prompt("Group Name: ")
+        if not name: raise typer.Exit(1)
+        if group_type is None:
+            group_type = pt_prompt("Group Type (package_group/container_group): ", 
+                                   completer=WordCompleter(["package_group", "container_group"]), default="package_group")
+        if strategy is None:
+            strategy = pt_prompt("Strategy (1-of-N/M-of-N): ", 
+                                 completer=WordCompleter(["1-of-N", "M-of-N"]), default="1-of-N")
+        if not options:
+            options_str = pt_prompt("Options (comma separated): ")
+            options = [opt.strip() for opt in options_str.split(",") if opt.strip()]
+        if description is None:
+            description = pt_prompt("Description [optional]: ")
+
+        hsm.add_group_to_registry(name, group_type, strategy, options, description)
+        console.print(f"[green]Group '{name}' added to registry.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@registry_group_app.command(name="remove")
+def registry_group_remove(
+    name: str = typer.Argument(..., help="Group name to remove"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm without prompt"),
+    registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
+):
+    """Remove a group from the registry."""
+    if not yes and not typer.confirm(f"Are you sure you want to remove group '{name}' from registry?"):
+        raise typer.Abort()
+    hsm = HSMCore(registry_path=registry)
+    try:
+        hsm.remove_from_registry(name)
+        console.print(f"[green]Group '{name}' removed from registry.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@registry_group_app.command(name="add-option")
+def registry_group_add_option(
+    group: str = typer.Argument(..., help="Group name"),
+    option: str = typer.Argument(..., help="Option name to add"),
+    registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
+):
+    """Add an option to a group in the registry."""
+    hsm = HSMCore(registry_path=registry)
+    try:
+        hsm.add_option_to_registry_group(group, option)
+        console.print(f"[green]Added option '{option}' to group '{group}' in registry.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@registry_group_app.command(name="remove-option")
+def registry_group_remove_option(
+    group: str = typer.Argument(..., help="Group name"),
+    option: str = typer.Argument(..., help="Option name to remove"),
+    registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
+):
+    """Remove an option from a group in the registry."""
+    hsm = HSMCore(registry_path=registry)
+    try:
+        hsm.remove_option_from_registry_group(group, option)
+        console.print(f"[green]Removed option '{option}' from group '{group}' in registry.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+# --- Top Level Project Commands ---
 
 @app.command()
 def init(
     name: Optional[str] = typer.Option(None, "--name", "-n", help="Name of the project"),
 ):
-    """Initialize a new HSM project (creates hsm.yaml)."""
+    """Initialize a new HSM project."""
     hsm = HSMCore()
     try:
         hsm.init_project(name=name)
@@ -173,7 +268,7 @@ def init(
 def sync(
     frozen: bool = typer.Option(False, "--frozen", help="Do not update dependencies, use lock file"),
 ):
-    """Materialize hsm.yaml into pyproject.toml and environment."""
+    """Sync project state with the manifest."""
     hsm = HSMCore()
     try:
         hsm.sync(frozen=frozen)
@@ -184,59 +279,153 @@ def sync(
 
 @app.command()
 def list():
-    """Show current project stack from hsm.yaml."""
+    """Show current project stack."""
     hsm = HSMCore()
     manifest = hsm.manifest
-    
     tree = Tree(f"[bold blue]Project: {manifest.data.get('project', {}).get('name', 'unknown')}[/bold blue]")
-    
     deps = tree.add("Dependencies")
     groups = deps.add("Groups")
     for g_name, group_cfg in manifest.package_groups.items():
         selection = group_cfg.get("selection", "none")
         strategy = group_cfg.get("strategy", "unknown")
         groups.add(f"{g_name} [dim]({strategy})[/dim]: [green]{selection}[/green]")
-    
     pkgs = deps.add("Standalone Packages")
     for p in manifest.packages:
-        pkgs.add(p)
-        
+        mode = manifest.get_package_mode(p)
+        pkgs.add(f"{p} [dim]({mode})[/dim]")
     console.print(tree)
 
-# --- Edit Commands ---
-
-@app.command(name="add")
-def add_component(
-    name: str = typer.Argument(..., help="Name of the package to add"),
-    group: Optional[str] = typer.Option(None, "--group", "-g", help="Add to a specific group"),
+@app.command()
+def mode(
+    mode: str = typer.Argument(..., help="Global mode to set (dev/prod)"),
 ):
-    """Add a package or group selection to hsm.yaml."""
+    """Set global project mode."""
     hsm = HSMCore()
     try:
-        if group:
-            hsm.add_package_group(group, name)
-            console.print(f"[green]Added {name} to group {group} in manifest. Run 'hsm sync' to apply.[/green]")
-        else:
-            hsm.add_package(name)
-            console.print(f"[green]Added {name} to manifest. Run 'hsm sync' to apply.[/green]")
+        hsm.set_global_mode(mode)
+        console.print(f"[green]Global mode set to {mode}. Run 'hsm sync' to apply.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-@app.command(name="remove")
-def remove_component(
-    name: str = typer.Argument(..., help="Name of the package to remove"),
-    group: Optional[str] = typer.Option(None, "--group", "-g", help="Remove from a specific group"),
+# --- Project Package Commands ---
+
+@package_app.command(name="add")
+def project_package_add(
+    name: str = typer.Argument(..., help="Package name"),
+    group: Optional[str] = typer.Option(None, "--group", "-g"),
 ):
-    """Remove a package or group selection from hsm.yaml."""
+    """Add a package to the project."""
+    hsm = HSMCore()
+    try:
+        if group:
+            hsm.add_package_group(group, name)
+        else:
+            hsm.add_package(name)
+        console.print(f"[green]Added package '{name}' to project. Run 'hsm sync' to apply.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@package_app.command(name="remove")
+def project_package_remove(
+    name: str = typer.Argument(..., help="Package name"),
+    group: Optional[str] = typer.Option(None, "--group", "-g"),
+):
+    """Remove a package from the project."""
     hsm = HSMCore()
     try:
         if group:
             hsm.remove_package_group(group, name)
-            console.print(f"[green]Removed {name} from group {group} in manifest. Run 'hsm sync' to apply.[/green]")
         else:
             hsm.remove_package(name)
-            console.print(f"[green]Removed {name} from manifest. Run 'hsm sync' to apply.[/green]")
+        console.print(f"[green]Removed package '{name}' from project. Run 'hsm sync' to apply.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@package_app.command(name="mode")
+def project_package_mode(
+    name: str = typer.Argument(..., help="Package name"),
+    mode: str = typer.Argument(..., help="Mode (dev/prod)"),
+):
+    """Set mode for a specific package."""
+    hsm = HSMCore()
+    try:
+        hsm.set_package_mode(name, mode)
+        console.print(f"[green]Mode for '{name}' set to {mode}. Run 'hsm sync' to apply.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+# --- Project Group Commands ---
+
+@group_app.command(name="add")
+def project_group_add(
+    name: str = typer.Argument(..., help="Group name"),
+    option: str = typer.Option(..., "--option", "-o"),
+):
+    """Add a group to the project."""
+    hsm = HSMCore()
+    try:
+        hsm.add_package_group(name, option)
+        console.print(f"[green]Added group '{name}' with selection '{option}'. Run 'hsm sync' to apply.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@group_app.command(name="remove")
+def project_group_remove(
+    name: str = typer.Argument(..., help="Group name"),
+):
+    """Remove a group from the project."""
+    hsm = HSMCore()
+    try:
+        hsm.remove_group(name)
+        console.print(f"[green]Removed group '{name}' from project. Run 'hsm sync' to apply.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@group_app.command(name="add-option")
+def project_group_add_option(
+    group: str = typer.Argument(..., help="Group name"),
+    option: str = typer.Argument(..., help="Option name"),
+):
+    """Add an option to a project group."""
+    hsm = HSMCore()
+    try:
+        hsm.add_group_option(group, option)
+        console.print(f"[green]Added option '{option}' to group '{group}'. Run 'hsm sync' to apply.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@group_app.command(name="remove-option")
+def project_group_remove_option(
+    group: str = typer.Argument(..., help="Group name"),
+    option: str = typer.Argument(..., help="Option name"),
+):
+    """Remove an option from a project group."""
+    hsm = HSMCore()
+    try:
+        hsm.remove_group_option(group, option)
+        console.print(f"[green]Removed option '{option}' from group '{group}'. Run 'hsm sync' to apply.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+# --- Project Python Manager Commands ---
+
+@python_manager_app.command(name="set")
+def project_python_manager_set(
+    manager: str = typer.Argument(..., help="Manager name (uv/pixi/pip)"),
+):
+    """Set the python package manager."""
+    hsm = HSMCore()
+    try:
+        hsm.set_python_manager(manager)
+        console.print(f"[green]Python manager set to {manager}.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
