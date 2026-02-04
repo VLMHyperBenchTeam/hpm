@@ -69,6 +69,7 @@ class HSMCore:
         logger.info("Starting HSM sync...")
         
         packages_to_sync = []
+        containers_to_sync = []
         
         # 1. Resolve packages from groups
         for group_name, group_cfg in self.manifest.package_groups.items():
@@ -76,10 +77,7 @@ class HSMCore:
             if not selection:
                 continue
                 
-            if isinstance(selection, str):
-                selections = [selection]
-            else:
-                selections = selection
+            selections = [selection] if isinstance(selection, str) else selection
             
             for pkg_name in selections:
                 pkg_req = self._resolve_package_requirement(pkg_name)
@@ -92,12 +90,35 @@ class HSMCore:
             if pkg_req:
                 packages_to_sync.append(pkg_req)
 
-        # 3. Delegate to adapter
+        # 3. Resolve containers from groups
+        container_groups = self.manifest.data.get("services", {}).get("container_groups", {})
+        for group_name, group_cfg in container_groups.items():
+            selection = group_cfg.get("selection")
+            if not selection:
+                continue
+            selections = [selection] if isinstance(selection, str) else selection
+            for cont_name in selections:
+                cont_cfg = self._resolve_container_config(cont_name)
+                if cont_cfg:
+                    containers_to_sync.append(cont_cfg)
+
+        # 4. Resolve standalone containers
+        standalone_containers = self.manifest.data.get("services", {}).get("containers", [])
+        for cont_name in standalone_containers:
+            cont_cfg = self._resolve_container_config(cont_name)
+            if cont_cfg:
+                containers_to_sync.append(cont_cfg)
+
+        # 5. Delegate to adapter for packages
         if packages_to_sync:
             self.adapter.sync(packages_to_sync, frozen=frozen)
-            logger.info("Sync completed successfully.")
-        else:
-            logger.info("No packages to sync.")
+        
+        # 6. Generate docker-compose.hsm.yml
+        if containers_to_sync:
+            self._generate_docker_compose(containers_to_sync)
+            logger.info("Docker Compose manifest generated.")
+
+        logger.info("Sync completed successfully.")
 
     def _resolve_package_requirement(self, name: str) -> Optional[str]:
         """Resolve a package name to a requirement string (path or git url).
@@ -131,6 +152,74 @@ class HSMCore:
             return req
         
         return None
+
+    def _resolve_container_config(self, name: str) -> Optional[Dict[str, Any]]:
+        """Resolve a container name to a docker-compose service config.
+
+        Args:
+            name: Container name.
+
+        Returns:
+            Service configuration dictionary.
+        """
+        cont_path = self.registry_path / "containers" / f"{name}.yaml"
+        if not cont_path.exists():
+            logger.warning(f"Container {name} not found in registry")
+            return None
+
+        with open(cont_path, "r") as f:
+            data = yaml.safe_load(f)
+            manifest = ContainerManifest(**data)
+        
+        mode = self.manifest.get_package_mode(name)
+        source = manifest.sources.dev if mode == "dev" and manifest.sources.dev else manifest.sources.prod
+        
+        if not source:
+            return None
+
+        service_cfg = {
+            "container_name": source.container_name or manifest.container_name or name,
+            "environment": {**manifest.env, **source.env},
+            "ports": list(set(manifest.ports + source.ports)),
+            "volumes": list(set(manifest.volumes + source.volumes)),
+        }
+        
+        if manifest.network_aliases or source.network_aliases:
+            service_cfg["networks"] = {
+                "default": {
+                    "aliases": list(set(manifest.network_aliases + source.network_aliases))
+                }
+            }
+
+        if source.type == "docker-image":
+            service_cfg["image"] = source.image
+        elif source.type == "build":
+            service_cfg["build"] = {
+                "context": str(self.project_root / source.path),
+            }
+            if source.dockerfile:
+                service_cfg["build"]["dockerfile"] = source.dockerfile
+        elif source.type == "local": # For containers, local might mean build context
+             service_cfg["build"] = {"context": str(self.project_root / source.path)}
+
+        return {name: service_cfg}
+
+    def _generate_docker_compose(self, services: List[Dict[str, Any]]):
+        """Generate docker-compose.hsm.yml file.
+
+        Args:
+            services: List of service configurations.
+        """
+        compose_data = {
+            "version": "3.8",
+            "services": {}
+        }
+        for s in services:
+            compose_data["services"].update(s)
+            
+        compose_path = self.project_root / "docker-compose.hsm.yml"
+        with open(compose_path, "w") as f:
+            yaml.dump(compose_data, f, sort_keys=False)
 
     def set_python_manager(self, manager_name: str):
         """Set the python package manager for the project.
@@ -234,8 +323,13 @@ class HSMCore:
             group_name: Name of the group.
             option: Selected option name.
         """
-        # Load group from registry to get strategy and comment
+        # Try both package and container groups
+        group_type = "package_group"
         group_path = self.registry_path / "package_groups" / f"{group_name}.yaml"
+        if not group_path.exists():
+            group_path = self.registry_path / "container_groups" / f"{group_name}.yaml"
+            group_type = "container_group"
+            
         if not group_path.exists():
             raise FileNotFoundError(f"Group {group_name} not found in registry")
             
@@ -245,12 +339,38 @@ class HSMCore:
             
         comment = data.get("comment")
             
-        self.manifest.set_package_group(
-            group_name=group_name,
-            selection=option,
-            strategy=group.strategy,
-            comment=comment
-        )
+        if group_type == "package_group":
+            self.manifest.set_package_group(
+                group_name=group_name,
+                selection=option,
+                strategy=group.strategy,
+                comment=comment
+            )
+        else:
+            # Handle container group in manifest
+            services = self.manifest.data.setdefault("services", {})
+            groups = services.setdefault("container_groups", {})
+            groups[group_name] = {
+                "strategy": group.strategy,
+                "selection": option
+            }
+
+        # Handle Implies
+        selected_opt = next((opt for opt in group.options if opt.name == option), None)
+        if selected_opt and selected_opt.implies:
+            logger.info(f"Option '{option}' implies additional dependencies: {selected_opt.implies}")
+            for target_type_group, target_option in selected_opt.implies.items():
+                # target_type_group format: "package_group:name" or "container_group:name"
+                if ":" in target_type_group:
+                    _, target_group_name = target_type_group.split(":", 1)
+                    # Recursively add implied group option
+                    # Note: This is a simple implementation, might need more robust handling for lists
+                    if isinstance(target_option, list):
+                        for opt in target_option:
+                            self.add_group_option(target_group_name, opt)
+                    else:
+                        self.add_group_option(target_group_name, target_option)
+
         self.manifest.save()
         logger.info(f"Added group {group_name} with selection {option} to hsm.yaml")
 
@@ -337,7 +457,48 @@ class HSMCore:
         
         logger.info(f"Package '{name}' added to registry at {manifest_file}")
 
-    def add_group_to_registry(self, name: str, group_type: str, strategy: str, options: List[str],
+    def add_container_to_registry(self, name: str, description: Optional[str] = None,
+                                 prod_source: Optional[Dict] = None, dev_source: Optional[Dict] = None,
+                                 ports: List[str] = None, volumes: List[str] = None, env: Dict[str, str] = None,
+                                 container_name: Optional[str] = None, network_aliases: List[str] = None):
+        """Add a container manifest to the registry.
+
+        Args:
+            name: Container name.
+            description: Optional description.
+            prod_source: Production source data.
+            dev_source: Development source data.
+            ports: Common ports.
+            volumes: Common volumes.
+            env: Common environment variables.
+            container_name: Common container name.
+            network_aliases: Common network aliases.
+        """
+        containers_dir = self.registry_path / "containers"
+        containers_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest_data = {
+            "name": name,
+            "description": description,
+            "type": "container",
+            "container_name": container_name,
+            "network_aliases": network_aliases or [],
+            "ports": ports or [],
+            "volumes": volumes or [],
+            "env": env or {},
+            "sources": {
+                "prod": prod_source,
+                "dev": dev_source
+            }
+        }
+
+        manifest_file = containers_dir / f"{name}.yaml"
+        with open(manifest_file, "w") as f:
+            yaml.dump(manifest_data, f, sort_keys=False)
+        
+        logger.info(f"Container '{name}' added to registry at {manifest_file}")
+
+    def add_group_to_registry(self, name: str, group_type: str, strategy: str, options: List[Union[str, Dict]],
                              description: Optional[str] = None, comment: Optional[str] = None):
         """Add a group manifest to the registry.
 
@@ -353,11 +514,18 @@ class HSMCore:
         groups_dir = self.registry_path / category
         groups_dir.mkdir(parents=True, exist_ok=True)
 
+        processed_options = []
+        for opt in options:
+            if isinstance(opt, str):
+                processed_options.append({"name": opt})
+            else:
+                processed_options.append(opt)
+
         manifest_data = {
             "name": name,
             "type": group_type,
             "strategy": strategy,
-            "options": [{"name": opt} for opt in options],
+            "options": processed_options,
         }
         if description:
             manifest_data["description"] = description

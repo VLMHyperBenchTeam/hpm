@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 class GroupOption(BaseModel):
     name: str
     description: Optional[str] = None
+    implies: Dict[str, Union[str, List[str]]] = Field(default_factory=dict)
 
 class RegistryGroup(BaseModel):
     name: str
@@ -14,13 +15,20 @@ class RegistryGroup(BaseModel):
     comment: Optional[str] = None
 
 class Source(BaseModel):
-    type: str  # "git", "local", "pypi", "docker-image"
+    type: str  # "git", "local", "pypi", "docker-image", "build"
     url: Optional[str] = None
     ref: Optional[str] = None
     path: Optional[str] = None
     editable: bool = False
     subdirectory: Optional[str] = None
     image: Optional[str] = None
+    # Docker specific
+    container_name: Optional[str] = None
+    network_aliases: List[str] = Field(default_factory=list)
+    ports: List[str] = Field(default_factory=list)
+    volumes: List[str] = Field(default_factory=list)
+    env: Dict[str, str] = Field(default_factory=dict)
+    dockerfile: Optional[str] = None
 
 class ManifestSources(BaseModel):
     prod: Optional[Source] = None
@@ -43,5 +51,10 @@ class ContainerManifest(BaseModel):
     name: str
     description: Optional[str] = None
     type: Literal["container"] = "container"
-    orchestration: Dict[str, Union[str, List[str]]] = Field(default_factory=dict)
+    # Common orchestration settings
+    container_name: Optional[str] = None
+    network_aliases: List[str] = Field(default_factory=list)
+    ports: List[str] = Field(default_factory=list)
+    volumes: List[str] = Field(default_factory=list)
+    env: Dict[str, str] = Field(default_factory=dict)
     sources: ManifestSources

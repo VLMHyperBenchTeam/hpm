@@ -37,6 +37,9 @@ registry_app.add_typer(registry_package_app, name="package")
 registry_group_app = typer.Typer(help="Manage groups in the registry")
 registry_app.add_typer(registry_group_app, name="group")
 
+registry_container_app = typer.Typer(help="Manage containers in the registry")
+registry_app.add_typer(registry_container_app, name="container")
+
 registry_path_app = typer.Typer(help="Manage registry path configuration")
 registry_app.add_typer(registry_path_app, name="path")
 
@@ -46,6 +49,9 @@ app.add_typer(package_app, name="package")
 
 group_app = typer.Typer(help="Manage groups in the current project")
 app.add_typer(group_app, name="group")
+
+container_app = typer.Typer(help="Manage containers in the current project")
+app.add_typer(container_app, name="container")
 
 python_manager_app = typer.Typer(help="Manage python package manager settings")
 app.add_typer(python_manager_app, name="python-manager")
@@ -122,27 +128,35 @@ def registry_package_add(
     prod_type: Optional[str] = typer.Option(None, "--prod-type"),
     prod_url: Optional[str] = typer.Option(None, "--prod-url"),
     dev_path: Optional[str] = typer.Option(None, "--dev-path"),
+    no_input: bool = typer.Option(False, "--no-input", help="Disable interactive wizard"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
     """Add a new package to the registry (Interactive Wizard supported)."""
     hsm = HSMCore(registry_path=registry)
     try:
         if name is None:
+            if no_input: raise typer.BadParameter("Name is required in no-input mode")
             name = pt_prompt("Package Name: ")
-            if not name:
-                raise typer.Exit(1)
-        if version is None:
-            version = pt_prompt("Version: ", default="0.1.0")
-        if description is None:
-            description = pt_prompt("Description: ")
-        if prod_type is None:
-            prod_type = pt_prompt("Prod Type (git/pypi): ", completer=WordCompleter(["git", "pypi"]), default="git")
-        if prod_url is None:
-            prod_url = pt_prompt("Prod URL/Name: ")
-        if dev_path is None:
-            dev_path = pt_prompt("Dev Path [optional]: ", completer=PathCompleter(only_directories=True))
+            if not name: raise typer.Exit(1)
+        
+        if no_input:
+            if version is None: version = "0.1.0"
+            if prod_type is None: prod_type = "git"
+        else:
+            if version is None: version = pt_prompt("Version: ", default="0.1.0")
+            if description is None: description = pt_prompt("Description: ")
+            if prod_type is None:
+                prod_type = pt_prompt("Prod Type (git/pypi/local): ", completer=WordCompleter(["git", "pypi", "local"]), default="git")
+            if prod_url is None and prod_type != "local":
+                prod_url = pt_prompt("Prod URL/Name: ")
+            if dev_path is None:
+                dev_path = pt_prompt("Dev Path [optional]: ", completer=PathCompleter(only_directories=True))
 
-        prod_source = {"type": prod_type, "url" if prod_type == "git" else "name": prod_url}
+        if prod_type == "local":
+            prod_source = {"type": "local", "path": dev_path}
+        else:
+            prod_source = {"type": prod_type, "url" if prod_type == "git" else "name": prod_url}
+            
         dev_source = {"type": "local", "path": dev_path, "editable": True} if dev_path else None
 
         hsm.add_package_to_registry(name, version, description, prod_source, dev_source)
@@ -177,24 +191,33 @@ def registry_group_add(
     strategy: Optional[str] = typer.Option(None, "--strategy", "-s"),
     options: Optional[List[str]] = typer.Option(None, "--option", "-o"),
     description: Optional[str] = typer.Option(None, "--description", "-d"),
+    no_input: bool = typer.Option(False, "--no-input"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
     """Add a new group to the registry."""
     hsm = HSMCore(registry_path=registry)
     try:
-        if name is None: name = pt_prompt("Group Name: ")
-        if not name: raise typer.Exit(1)
-        if group_type is None:
-            group_type = pt_prompt("Group Type (package_group/container_group): ", 
-                                   completer=WordCompleter(["package_group", "container_group"]), default="package_group")
-        if strategy is None:
-            strategy = pt_prompt("Strategy (1-of-N/M-of-N): ", 
-                                 completer=WordCompleter(["1-of-N", "M-of-N"]), default="1-of-N")
-        if not options:
-            options_str = pt_prompt("Options (comma separated): ")
-            options = [opt.strip() for opt in options_str.split(",") if opt.strip()]
-        if description is None:
-            description = pt_prompt("Description [optional]: ")
+        if name is None:
+            if no_input: raise typer.BadParameter("Name is required")
+            name = pt_prompt("Group Name: ")
+            if not name: raise typer.Exit(1)
+            
+        if no_input:
+            if group_type is None: group_type = "package_group"
+            if strategy is None: strategy = "1-of-N"
+            if options is None: options = []
+        else:
+            if group_type is None:
+                group_type = pt_prompt("Group Type (package_group/container_group): ",
+                                       completer=WordCompleter(["package_group", "container_group"]), default="package_group")
+            if strategy is None:
+                strategy = pt_prompt("Strategy (1-of-N/M-of-N): ",
+                                     completer=WordCompleter(["1-of-N", "M-of-N"]), default="1-of-N")
+            if not options:
+                options_str = pt_prompt("Options (comma separated): ")
+                options = [opt.strip() for opt in options_str.split(",") if opt.strip()]
+            if description is None:
+                description = pt_prompt("Description [optional]: ")
 
         hsm.add_group_to_registry(name, group_type, strategy, options, description)
         console.print(f"[green]Group '{name}' added to registry.[/green]")
@@ -245,6 +268,78 @@ def registry_group_remove_option(
     try:
         hsm.remove_option_from_registry_group(group, option)
         console.print(f"[green]Removed option '{option}' from group '{group}' in registry.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+# --- Registry Container Commands ---
+
+@registry_container_app.command(name="add")
+def registry_container_add(
+    name: Optional[str] = typer.Argument(None, help="Container name"),
+    image: Optional[str] = typer.Option(None, "--image"),
+    build_path: Optional[str] = typer.Option(None, "--build-path"),
+    dockerfile: Optional[str] = typer.Option(None, "--dockerfile"),
+    ports: Optional[List[str]] = typer.Option(None, "--port", "-p"),
+    volumes: Optional[List[str]] = typer.Option(None, "--volume", "-v"),
+    env: Optional[List[str]] = typer.Option(None, "--env", "-e"),
+    description: Optional[str] = typer.Option(None, "--description", "-d"),
+    no_input: bool = typer.Option(False, "--no-input"),
+    registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
+):
+    """Add a new container to the registry."""
+    hsm = HSMCore(registry_path=registry)
+    try:
+        if name is None:
+            if no_input: raise typer.BadParameter("Name is required")
+            name = pt_prompt("Container Name: ")
+            if not name: raise typer.Exit(1)
+
+        if not no_input:
+            if image is None and build_path is None:
+                image = pt_prompt("Image [optional]: ")
+                if not image:
+                    build_path = pt_prompt("Build Path [optional]: ")
+            if description is None:
+                description = pt_prompt("Description [optional]: ")
+
+        env_dict = {}
+        if env:
+            for e in env:
+                if "=" in e:
+                    k, v = e.split("=", 1)
+                    env_dict[k] = v
+
+        prod_source = {"type": "docker-image", "image": image} if image else None
+        dev_source = {"type": "build", "path": build_path, "dockerfile": dockerfile} if build_path else None
+
+        hsm.add_container_to_registry(
+            name=name,
+            description=description,
+            prod_source=prod_source,
+            dev_source=dev_source,
+            ports=ports,
+            volumes=volumes,
+            env=env_dict
+        )
+        console.print(f"[green]Container '{name}' added to registry.[/green]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(code=1)
+
+@registry_container_app.command(name="remove")
+def registry_container_remove(
+    name: str = typer.Argument(..., help="Container name to remove"),
+    yes: bool = typer.Option(False, "--yes", "-y"),
+    registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
+):
+    """Remove a container from the registry."""
+    if not yes and not typer.confirm(f"Are you sure you want to remove container '{name}'?"):
+        raise typer.Abort()
+    hsm = HSMCore(registry_path=registry)
+    try:
+        hsm.remove_from_registry(name)
+        console.print(f"[green]Container '{name}' removed from registry.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
