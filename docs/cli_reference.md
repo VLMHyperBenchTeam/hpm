@@ -67,6 +67,26 @@ HSM поддерживает автодополнение команд для Ba
 #### `hsm container-manager set` (Future)
 Выбирает рантайм для контейнеров (например, `docker` или `podman`).
 
+### Управление сервисами с Контейнерами (`hsm container ...`)
+
+#### `hsm container add`
+Добавляет сервис контейнер в `hsm.yaml` (в секцию `services.containers`).
+- **Аргументы**:
+  - `NAME` (Required): Имя контейнера.
+  - `--group`, `-g` (Optional): Добавить как опцию в существующую группу контейнеров.
+
+#### `hsm container remove`
+Удаляет контейнер из `hsm.yaml`.
+- **Аргументы**:
+  - `NAME` (Required): Имя контейнера.
+  - `--group`, `-g` (Optional): Удалить из конкретной группы.
+
+#### `hsm container mode`
+Атомарное переключение режима для конкретного контейнера.
+- **Аргументы**:
+  - `NAME` (Required): Имя контейнера.
+  - `MODE` (Required): Режим (`dev` или `prod`).
+
 ### Управление Пакетами (`hsm package ...`)
 
 #### `hsm package add`
@@ -113,6 +133,7 @@ HSM поддерживает автодополнение команд для Ba
 - **Поведение**:
   - Для стратегии **1-of-N**: Заменяет текущий выбор на указанную опцию (например, смена `qdrant` на `milvus`).
   - Для стратегии **M-of-N**: Добавляет опцию к списку выбранных.
+  - **Implies (Автоматические зависимости)**: Если выбранная опция имеет поле `implies` в реестре (например, клиент БД требует сервис БД), HSM автоматически добавит или предложит добавить соответствующие зависимости в другие группы.
 
 #### `hsm group remove-option`
 Удаляет вариант выбора из группы в манифесте.
@@ -161,6 +182,7 @@ HSM поддерживает автодополнение команд для Ba
 #### `hsm registry group add`
 Создает новую группу в реестре.
 - **Аргументы**: `NAME`, `--type`, `--strategy`, `--option` (multiple), `--description`.
+- **Implies**: Для настройки зависимостей (`implies`) между опциями используйте редактирование YAML файла группы после создания, так как это сложная структура для CLI аргументов.
 
 #### `hsm registry group remove`
 Удаляет группу из реестра.
@@ -181,15 +203,42 @@ HSM поддерживает автодополнение команд для Ba
   - `GROUP` (Required): Имя группы.
   - `OPTION` (Required): Имя пакета.
 
-### Управление Контейнерами (`hsm registry container ...`)
+### Управление Сервисами в Контейнерах (`hsm registry container ...`)
 
 #### `hsm registry container add`
-Добавляет Docker-контейнер в реестр.
-- **Аргументы**: `NAME`, `--image`, `--description`.
+Добавляет описание сервиса (Docker-контейнера) в реестр.
+
+**Общие аргументы:**
+- `NAME` (Required): Имя сервиса (например, `qdrant`).
+- `--container-name` (Optional): Явное имя контейнера (например, `qdrant-instance`).
+- `--network-alias` (Optional, Multiple): Сетевые алиасы (например, `vector-db`).
+- `--description`, `-d` (Optional): Описание сервиса.
+- `--env`, `-e` (Optional, Multiple): Общие переменные окружения (например, `TZ=UTC`).
+- `--no-input` (Optional): Отключить интерактивный режим.
+
+**Production (Stable) аргументы:**
+- `--image` (Optional): Docker image для Prod-режима (например, `qdrant/qdrant:latest`).
+- `--prod-container-name` (Optional): Имя контейнера только для Prod.
+- `--prod-network-alias` (Optional, Multiple): Алиасы только для Prod.
+- `--prod-port` (Optional, Multiple): Порты только для Prod (например, `80:80`).
+- `--prod-volume` (Optional, Multiple): Тома только для Prod (например, `qdrant_data:/data`).
+- `--prod-env` (Optional, Multiple): Env только для Prod.
+
+**Development (Local) аргументы:**
+- `--build-path` (Optional): Путь к контексту сборки для Dev-режима (например, `./docker/qdrant`).
+- `--dockerfile` (Optional): Имя Dockerfile, если отличается от стандартного (по умолчанию `Dockerfile`).
+- `--dev-image` (Optional): Docker image для Dev-режима (если не используется сборка).
+- `--dev-container-name` (Optional): Имя контейнера только для Dev.
+- `--dev-network-alias` (Optional, Multiple): Алиасы только для Dev.
+- `--dev-port` (Optional, Multiple): Порты для Dev (например, `6333:6333` для отладки).
+- `--dev-volume` (Optional, Multiple): Тома для Dev (например, `./data:/data` для hot-reload).
+- `--dev-env` (Optional, Multiple): Env для Dev.
 
 #### `hsm registry container remove`
-Удаляет контейнер из реестра.
-- **Аргументы**: `NAME`, `--yes`, `-y`.
+Удаляет сервис из реестра.
+- **Аргументы**:
+  - `NAME` (Required): Имя сервиса.
+  - `--yes`, `-y` (Optional): Подтвердить удаление без запроса.
 
 ---
 
@@ -203,4 +252,6 @@ HSM поддерживает автодополнение команд для Ba
 | **Удалить группу** | `group remove` | `group remove` |
 | **Добавить опцию** | `group add-option` | `group add-option` |
 | **Удалить опцию** | `group remove-option` | `group remove-option` |
-| **Режим** | `mode`, `package mode` | — |
+| **Режим** | `mode`, `package mode`, `container mode` | — |
+| **Добавить контейнер** | `container add` | `container add` |
+| **Удалить контейнер** | `container remove` | `container remove` |
