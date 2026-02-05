@@ -19,6 +19,12 @@ dependencies = [
 [project.scripts]
 hsm = "hyper_stack_manager.cli:app"
 
+[project.entry-points."hsm.package_managers"]
+uv = "hyper_stack_manager.adapters.python_uv:UvAdapter"
+
+[project.entry-points."hsm.container_engines"]
+docker = "hyper_stack_manager.adapters.container_docker:DockerComposeAdapter"
+
 [build-system]
 requires = ["uv_build>=0.9.26"]
 build-backend = "uv_build"

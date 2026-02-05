@@ -1,60 +1,28 @@
-from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import List, Dict, Union
 import subprocess
 import logging
+import os
+from pathlib import Path
+from typing import List
 import tomlkit
+from .base import BasePackageManagerAdapter
 
 logger = logging.getLogger(__name__)
-
-class BasePackageManagerAdapter(ABC):
-    """Abstract base class for package manager adapters."""
-
-    @abstractmethod
-    def sync(self, packages: List[str], frozen: bool = False):
-        """Materialize dependencies into the environment.
-
-        Args:
-            packages: List of package requirement strings.
-            frozen: If True, do not update dependencies, use lock file.
-        """
-        pass
-
-    @abstractmethod
-    def lock(self):
-        """Generate lock file."""
-        pass
 
 class UvAdapter(BasePackageManagerAdapter):
     """Adapter for the uv package manager."""
 
     def __init__(self, project_root: Path):
-        """Initialize UvAdapter.
-
-        Args:
-            project_root: Root directory of the project.
-        """
-        self.project_root = project_root
+        super().__init__(project_root)
         self.pyproject_path = project_root / "pyproject.toml"
 
     def _get_base_cmd(self) -> List[str]:
-        """Get the base uv command with optional --system flag.
-
-        Returns:
-            List of command parts.
-        """
-        import os
+        """Get the base uv command with optional --system flag."""
         if os.getenv("HSM_USE_SYSTEM") == "1":
             return ["uv", "--system"]
         return ["uv"]
 
     def sync(self, packages: List[str], frozen: bool = False):
-        """Sync dependencies using uv.
-
-        Args:
-            packages: List of package requirement strings.
-            frozen: If True, use --frozen flag.
-        """
+        """Sync dependencies using uv."""
         logger.info(f"Syncing {len(packages)} packages with uv...")
         
         # 1. Update pyproject.toml dependencies

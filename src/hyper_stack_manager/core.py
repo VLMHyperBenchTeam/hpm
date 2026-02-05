@@ -1,10 +1,11 @@
 import logging
 import yaml
+import importlib.metadata
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Union
+from typing import List, Dict, Optional, Any, Union, Type
 from .models import PackageManifest, ContainerManifest, RegistryGroup, HSMDependency
 from .manifest import HSMProjectManifest
-from .adapters import UvAdapter, BasePackageManagerAdapter
+from .adapters.base import BasePackageManagerAdapter, BaseContainerAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -21,21 +22,44 @@ class HSMCore:
         self.project_root = project_root or Path.cwd()
         self.manifest = HSMProjectManifest(self.project_root / "hsm.yaml")
         
-        # Initialize adapter based on manifest
-        self.adapter = self._get_adapter()
+        # Initialize adapters based on manifest
+        self.package_adapter = self._get_package_adapter()
+        self.container_adapter = self._get_container_adapter()
         
         self.registry_path = registry_path or self.project_root / "hsm-registry"
 
-    def _get_adapter(self) -> BasePackageManagerAdapter:
-        """Get the appropriate package manager adapter.
+    def _get_package_adapter(self) -> BasePackageManagerAdapter:
+        """Get the appropriate package manager adapter using entry points.
 
         Returns:
             An instance of BasePackageManagerAdapter.
         """
         manager = self.manifest.manager
-        if manager == "uv":
-            return UvAdapter(self.project_root)
-        raise ValueError(f"Unsupported package manager: {manager}")
+        eps = importlib.metadata.entry_points(group="hsm.package_managers")
+        
+        for ep in eps:
+            if ep.name == manager:
+                adapter_class: Type[BasePackageManagerAdapter] = ep.load()
+                return adapter_class(self.project_root)
+                
+        raise ValueError(f"Unsupported package manager: {manager}. Available: {[ep.name for ep in eps]}")
+
+    def _get_container_adapter(self) -> BaseContainerAdapter:
+        """Get the appropriate container adapter using entry points.
+
+        Returns:
+            An instance of BaseContainerAdapter.
+        """
+        # Default to docker if not specified (currently hsm.yaml might not have this field)
+        engine = self.manifest.data.get("project", {}).get("container_engine", "docker")
+        eps = importlib.metadata.entry_points(group="hsm.container_engines")
+        
+        for ep in eps:
+            if ep.name == engine:
+                adapter_class: Type[BaseContainerAdapter] = ep.load()
+                return adapter_class(self.project_root)
+                
+        raise ValueError(f"Unsupported container engine: {engine}. Available: {[ep.name for ep in eps]}")
 
     def init_project(self, name: Optional[str] = None):
         """Initialize a new HSM project.
@@ -111,11 +135,11 @@ class HSMCore:
 
         # 5. Delegate to adapter for packages
         if packages_to_sync:
-            self.adapter.sync(list(packages_to_sync.values()), frozen=frozen)
+            self.package_adapter.sync(list(packages_to_sync.values()), frozen=frozen)
         
         # 6. Generate docker-compose.hsm.yml
         if containers_to_sync:
-            self._generate_docker_compose(containers_to_sync)
+            self.container_adapter.generate_config(containers_to_sync)
             logger.info("Docker Compose manifest generated.")
 
         logger.info("Sync completed successfully.")
@@ -208,22 +232,6 @@ class HSMCore:
 
         return {name: service_cfg}
 
-    def _generate_docker_compose(self, services: List[Dict[str, Any]]):
-        """Generate docker-compose.hsm.yml file.
-
-        Args:
-            services: List of service configurations.
-        """
-        compose_data = {
-            "version": "3.8",
-            "services": {}
-        }
-        for s in services:
-            compose_data["services"].update(s)
-            
-        compose_path = self.project_root / "docker-compose.hsm.yml"
-        with open(compose_path, "w") as f:
-            yaml.dump(compose_data, f, sort_keys=False)
 
     def set_python_manager(self, manager_name: str):
         """Set the python package manager for the project.
