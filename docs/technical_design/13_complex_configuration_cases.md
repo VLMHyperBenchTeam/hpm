@@ -2,12 +2,14 @@
 
 Этот документ описывает продвинутые сценарии использования HSM, демонстрирующие гибкость системы при работе с инфраструктурой и зависимостями.
 
+---
+
 ## Кейс 1: "Один на всех" (Shared Service)
 
 Сценарий, когда несколько компонентов системы используют один и тот же физический или логический ресурс.
 
 ### 1.1. Слияние в Managed режиме (Shared Container)
-**Проблема**: Несколько пакетов требуют одну и ту же СУБД. Мы хотим запустить один контейнер, но создать в нем разные базы.
+**Задача**: Несколько пакетов требуют одну и ту же СУБД. Мы хотим запустить один контейнер, но создать в нем разные базы.
 
 ```mermaid
 graph TD
@@ -35,8 +37,49 @@ graph TD
     Merged -->|generates| Docker
 ```
 
+**Как это работает**:
+HSM анализирует зависимости всех выбранных пакетов. Если несколько пакетов ссылаются на один и тот же идентификатор контейнера в реестре, HSM выполняет **Implication Merging** (слияние намерений).
+
+**Примеры конфигураций**:
+
+1.  **Пакет 1 (Auth)** (`registry/packages/auth-service.yaml`):
+    ```yaml
+    name: auth-service
+    implies:
+      container:postgres:
+        params:
+          db_name: "auth_db"
+    ```
+
+2.  **Пакет 2 (Billing)** (`registry/packages/billing-service.yaml`):
+    ```yaml
+    name: billing-service
+    implies:
+      container:postgres:
+        params:
+          db_name: "billing_db"
+    ```
+
+3.  **Сервис (Postgres)** (`registry/containers/postgres.yaml`):
+    ```yaml
+    name: postgres
+    env:
+      # HSM соберет все параметры 'db_name' от всех пакетов в этот список
+      POSTGRES_MULTIPLE_DATABASES: "${HSM_MERGED_PARAMS.db_name}"
+    ```
+
+4.  **Манифест проекта** (`hsm.yaml`):
+    ```yaml
+    packages:
+      - auth-service
+      - billing-service
+    # HSM сам достроит секцию services, обнаружив общую зависимость
+    ```
+
+---
+
 ### 1.2. Общий доступ в External режиме (Shared Remote DB)
-**Проблема**: Много пакетов должны подключиться к одной удаленной БД, параметры которой описаны в реестре.
+**Задача**: Много пакетов должны подключиться к одной удаленной БД, параметры которой описаны в реестре.
 
 ```mermaid
 graph TD
@@ -51,22 +94,45 @@ graph TD
     end
     
     subgraph Runtime [3. Environment]
-        EnvA[ENV for Pkg A: DB_HOST=10.0.0.50]
-        EnvB[ENV for Pkg B: DB_HOST=10.0.0.50]
+        EnvVars[ENV: SHARED_DB_HOST=10.0.0.50]
         RemoteDB[(Remote Postgres Server)]
     end
     
-    ExtConfig --> EnvA
-    ExtConfig --> EnvB
-    EnvA -->|connects| RemoteDB
-    EnvB -->|connects| RemoteDB
+    ExtConfig --> EnvVars
+    EnvVars -->|injected into| PkgA
+    EnvVars -->|injected into| PkgB
 ```
+
+**Как это работает**:
+Конфигурация внешнего сервера описывается один раз в **Профиле Реестра**. Проект просто ссылается на профиль. Это обеспечивает принцип DRY (Don't Repeat Yourself) для инфраструктуры.
+
+**Примеры конфигураций**:
+
+1.  **Реестр сервиса** (`registry/containers/qdrant.yaml`):
+    ```yaml
+    name: qdrant
+    deployment_profiles:
+      external-corp:
+        mode: external
+        external:
+          host: "10.0.0.50"
+          port: 6333
+    ```
+
+2.  **Манифест проекта** (`hsm.yaml`):
+    ```yaml
+    services:
+      container_groups:
+        vector-db:
+          selection: qdrant
+          profile: external-corp # Все клиенты qdrant в проекте подключатся к 10.0.0.50
+    ```
 
 ---
 
 ## Кейс 2: "Гибридное облако" (Hybrid BYOI)
 
-**Проблема**: Разработчик хочет использовать локальный Chunker (в Docker), но подключаться к мощной векторной БД в облаке (External).
+**Задача**: Разработчик хочет использовать локальный Chunker (в Docker), но подключаться к мощной векторной БД в облаке (External).
 
 ```mermaid
 graph TD
@@ -92,18 +158,36 @@ graph TD
     External -->|injects connection to| CloudDB
 ```
 
+**Как это работает**:
+HSM позволяет смешивать режимы развертывания в рамках одного проекта. Для каждого сервиса или группы сервисов можно указать свой профиль из реестра.
+
+**Пример конфигурации `hsm.yaml`**:
+```yaml
+services:
+  container_groups:
+    chunker-service:
+      selection: local-chunker
+      profile: managed-dev    # Будет запущен локальный контейнер через Docker Compose
+    
+    vector-db-service:
+      selection: qdrant
+      profile: external-prod  # Контейнер не запустится, будут проброшены параметры облака
+```
+
 ---
 
 ## Кейс 3: "Симметричная разработка" (Editable Stack)
 
-**Проблема**: Нужно одновременно вносить изменения в два зависимых пакета (например, в ядро системы и в плагин).
+**Задача**: Нужно одновременно вносить изменения в два зависимых пакета (например, в ядро системы и в плагин).
 
-**Решение**: Использование **Editable Sources** в реестре. При выполнении `hsm sync`, HSM (через `uv`) установит пакет как ссылку на локальную папку. Любое изменение кода мгновенно отразится на работе всего стэка.
+**Как это делает HSM**:
+Использование **Editable Sources** в реестре. При выполнении `hsm sync`, HSM (через `uv`) установит пакет как ссылку на локальную папку. Любое изменение кода в папке разработчика мгновенно отразится на работе всего стэка без переустановки.
 
 ---
 
 ## Кейс 4: "Секреты без утечек" (Zero-Leak Secrets)
 
-**Проблема**: Нужно передать API ключи в контейнеры и пакеты, не сохраняя их в Git.
+**Задача**: Нужно передать API ключи в контейнеры и пакеты, не сохраняя их в Git.
 
-**Решение**: **Variable Interpolation**. HSM считывает значение из системного окружения или `.env` файла в момент синхронизации (`${MY_SECRET}`). В YAML-файлах остаются только ссылки.
+**Как это делает HSM**:
+**Variable Interpolation**. HSM считывает значение из системного окружения или `.env` файла в момент синхронизации (`${MY_SECRET}`). В YAML-файлах реестра и проекта остаются только безопасные ссылки.
