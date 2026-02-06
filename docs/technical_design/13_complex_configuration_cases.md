@@ -176,7 +176,58 @@ services:
 
 ---
 
-## Кейс 3: "Симметричная разработка" (Editable Stack)
+## Кейс 3: "Комбинированный стек" (Hybrid Stack)
+
+**Задача**: Реализовать сложную схему, где разные части системы работают в разных режимах:
+*   **Пакет `rag-engine` (Prod)** и **Пакет `rag-worker` (Dev)** подключаются к одному внешнему Qdrant.
+*   **Пакет `rag-debug-tool` (Dev)** подключается к локальному Ollama.
+
+```mermaid
+graph TD
+    subgraph Project [hsm.yaml]
+        direction TB
+        subgraph Pkgs [Packages]
+            P1[rag-engine: prod]
+            P2[rag-worker: dev]
+            P3[rag-debug-tool: dev]
+        end
+        
+        subgraph SvcCfg [Service Config]
+            QdrantCfg[Qdrant: profile external-cloud]
+            OllamaCfg[Ollama: profile managed-local]
+        end
+    end
+
+    subgraph Registry [HSM Registry]
+        P1 & P2 -->|implies| Qdrant[Service: Qdrant]
+        P3 -->|implies| Ollama[Service: Ollama]
+        
+        Qdrant -.-> CloudProf[Profile: external-cloud]
+        Ollama -.-> LocalProf[Profile: managed-local]
+    end
+
+    subgraph Runtime [Environment]
+        CloudQ[(Cloud Qdrant)]
+        LocalO[Local Container: Ollama]
+        
+        EnvQ[ENV: QDRANT_HOST=cloud.io]
+        EnvO[ENV: OLLAMA_HOST=localhost]
+    end
+
+    CloudProf --> EnvQ
+    LocalProf --> LocalO
+    LocalProf --> EnvO
+    
+    EnvQ --> P1 & P2
+    EnvO --> P3
+```
+
+**Как это работает**:
+HSM одновременно управляет и внешними связями, и локальными контейнерами. Он гарантирует, что `rag-engine` и `rag-worker` получат одинаковые настройки для облачной БД, в то время как отладочный инструмент будет работать с локальной нейросетью.
+
+---
+
+## Кейс 4: "Симметричная разработка" (Editable Stack)
 
 **Задача**: Нужно одновременно вносить изменения в два зависимых пакета (например, в ядро системы и в плагин).
 
@@ -185,7 +236,7 @@ services:
 
 ---
 
-## Кейс 4: "Секреты без утечек" (Zero-Leak Secrets)
+## Кейс 5: "Секреты без утечек" (Zero-Leak Secrets)
 
 **Задача**: Нужно передать API ключи в контейнеры и пакеты, не сохраняя их в Git.
 
