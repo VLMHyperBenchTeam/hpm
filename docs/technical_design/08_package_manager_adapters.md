@@ -55,6 +55,11 @@ class BasePackageManagerAdapter(ABC):
     def lock(self):
         """Generate lock file."""
         pass
+
+    @abstractmethod
+    def init_lib(self, path: Path):
+        """Initialize a new library/package at the given path."""
+        pass
 ```
 
 #### BaseContainerAdapter
@@ -81,7 +86,7 @@ class BaseContainerAdapter(ABC):
 ### 3.1. UvAdapter (Package Manager)
 Использует `uv` для управления зависимостями.
 *   **Механизм**: Обновляет секцию `[project.dependencies]` в `pyproject.toml` с использованием `tomlkit`.
-*   **Команды**: `uv sync`, `uv lock`.
+*   **Команды**: `uv sync`, `uv lock`, `uv init --lib`.
 
 ### 3.2. DockerComposeAdapter (Container Engine)
 Управляет контейнерами через Docker Compose.
