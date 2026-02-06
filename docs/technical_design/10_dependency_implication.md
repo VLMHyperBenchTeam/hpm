@@ -99,3 +99,98 @@ HSM выполняет строгие проверки для предотвра
 *   **Декларативность**: Зависимости описаны явно в реестре, а не скрыты в скриптах установки.
 *   **Целостность**: Гарантирует, что инфраструктура соответствует коду.
 *   **Удобство**: Пользователь делает один высокоуровневый выбор, а система достраивает детали.
+
+## Service-Centric Configuration (BYOI)
+
+Для поддержки сценариев **Bring Your Own Infrastructure (BYOI)**, когда пользователь хочет использовать существующий внешний сервис вместо запуска нового контейнера, HSM вводит концепцию **Deployment Profiles** (Профили развертывания).
+
+### Архитектура Профилей (в Реестре)
+
+Детали подключения и режим работы (`managed` или `external`) описываются в реестре, внутри определения контейнера. Это позволяет инкапсулировать сложность инфраструктуры и переиспользовать конфигурации между проектами.
+
+**Пример `hsm-registry/containers/qdrant.yaml`:**
+```yaml
+name: qdrant
+type: container
+# ... базовые параметры ...
+
+deployment_profiles:
+  # Профиль для локальной разработки (Docker)
+  managed-dev:
+    mode: managed
+    container_name: qdrant-dev
+    ports: ["6333:6333"]
+    env:
+      QDRANT__SERVICE__API_KEY: "dev-secret"
+
+  # Профиль для продакшена (Внешний кластер)
+  external-prod:
+    mode: external
+    external:
+      host: "${QDRANT_PROD_HOST}" # Берется из .env
+      port: 6333
+      api_key: "${QDRANT_PROD_KEY}"
+```
+
+### Использование в Проекте (`hsm.yaml`)
+
+В манифесте проекта пользователь просто выбирает нужный профиль.
+
+```yaml
+services:
+  container_groups:
+    vector-db-service:
+      selection: qdrant
+      profile: external-prod  # Ссылка на профиль из реестра
+```
+
+### Взаимодействие с Implies
+
+1.  **Managed Profile**:
+    *   HSM генерирует сервис в `docker-compose.hsm.yml`.
+    *   Пробрасывает имя сервиса Docker как хост в зависимые пакеты.
+
+2.  **External Profile**:
+    *   HSM **не генерирует** контейнер.
+    *   Берет параметры (`host`, `port`, `api_key`) из профиля в реестре.
+    *   Пробрасывает их в зависимые пакеты через переменные окружения.
+
+### Преимущества
+*   **Чистота проекта**: `hsm.yaml` содержит только намерения, а не детали реализации.
+*   **Единый источник правды**: Изменение адреса базы в реестре автоматически распространяется на все проекты.
+*   **Безопасность**: Секреты передаются через ENV-переменные, на которые ссылается профиль.
+
+## Схема связей (Data Flow)
+
+```mermaid
+graph TD
+    subgraph Registry [HSM Registry]
+        Pkg[Package: rag4code-qdrant]
+        Cont[Container: qdrant]
+        
+        subgraph Profiles [Deployment Profiles]
+            ProfDev[Profile: managed-dev]
+            ProfProd[Profile: external-prod]
+        end
+        
+        Cont --> ProfDev
+        Cont --> ProfProd
+        
+        Pkg -->|implies| Cont
+    end
+
+    subgraph Project [hsm.yaml]
+        UserSelection[Selection: qdrant]
+        UserProfile[Profile: external-prod]
+        
+        UserSelection --> Cont
+        UserProfile --> ProfProd
+    end
+
+    subgraph Runtime [Environment]
+        EnvVars[ENV: QDRANT_HOST=192.168.1.50]
+    end
+
+    ProfProd -->|injects config| EnvVars
+    Pkg -->|consumes| EnvVars
+```
