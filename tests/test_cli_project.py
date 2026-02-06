@@ -71,8 +71,8 @@ def test_project_group_add(runner, temp_project, monkeypatch):
     registry_dir = temp_project / "hsm-registry"
     registry_dir.mkdir()
     (registry_dir / "package_groups").mkdir()
-    (registry_dir / "package_groups" / "my-group.yaml").write_text("name: my-group\nstrategy: 1-of-N\noptions: [{name: opt1}]")
-    
+    (registry_dir / "package_groups" / "my-group.yaml").write_text("name: my-group\ntype: package_group\nstrategy: 1-of-N\noptions: [{name: opt1}]")
+
     monkeypatch.chdir(temp_project)
     result = runner.invoke(app, ["group", "add", "my-group", "--option", "opt1"])
     assert result.exit_code == 0
