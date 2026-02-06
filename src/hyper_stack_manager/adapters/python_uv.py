@@ -56,3 +56,13 @@ class UvAdapter(BasePackageManagerAdapter):
         except subprocess.CalledProcessError as e:
             logger.error(f"uv lock failed: {e}")
             raise
+
+    def init_lib(self, path: Path):
+        """Initialize a new library with uv init --lib."""
+        path.mkdir(parents=True, exist_ok=True)
+        cmd = self._get_base_cmd() + ["init", "--lib"]
+        try:
+            subprocess.run(cmd, check=True, cwd=path)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"uv init failed: {e}")
+            raise

@@ -29,6 +29,15 @@ class BasePackageManagerAdapter(ABC):
         """Generate lock file."""
         pass
 
+    @abstractmethod
+    def init_lib(self, path: Path):
+        """Initialize a new library/package at the given path.
+
+        Args:
+            path: Path where to initialize the package.
+        """
+        pass
+
 
 class BaseContainerAdapter(ABC):
     """Abstract base class for container service adapters (e.g., docker, podman)."""

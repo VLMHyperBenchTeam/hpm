@@ -1,10 +1,10 @@
-from typing import Dict, List, Optional, Union, Literal
+from typing import Dict, List, Optional, Union, Literal, Any
 from pydantic import BaseModel, Field
 
 class GroupOption(BaseModel):
     name: str
     description: Optional[str] = None
-    implies: Dict[str, Union[str, List[str]]] = Field(default_factory=dict)
+    implies: Dict[str, Any] = Field(default_factory=dict)
 
 class RegistryGroup(BaseModel):
     name: str
@@ -45,6 +45,7 @@ class PackageManifest(BaseModel):
     type: Literal["library", "service", "virtual"] = "library"
     sources: ManifestSources
     dependencies: List[Union[str, HSMDependency]] = Field(default_factory=list)
+    implies: Dict[str, Any] = Field(default_factory=dict)
     entrypoints: Dict[str, str] = Field(default_factory=dict)
 
 class ContainerManifest(BaseModel):
