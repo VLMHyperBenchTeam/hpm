@@ -160,11 +160,47 @@ services:
 *   **Единый источник правды**: Изменение адреса базы в реестре автоматически распространяется на все проекты.
 *   **Безопасность**: Секреты передаются через ENV-переменные, на которые ссылается профиль.
 
+## Implication Merging (Слияние зависимостей)
+
+Механизм слияния позволяет HSM эффективно управлять ресурсами, когда несколько компонентов требуют один и тот же сервис, но с разными параметрами.
+
+### Концепция
+Если несколько пакетов «подразумевают» один и тот же контейнер (по имени в реестре), HSM не создает дубликаты сервисов. Вместо этого он **сливает** их требования в единую конфигурацию.
+
+### Пример: Один Postgres — много баз данных
+1.  **Пакет A** требует `postgres` с параметром `db_name: "vector_db"`.
+2.  **Пакет B** требует `postgres` с параметром `db_name: "graph_db"`.
+3.  **HSM** объединяет эти требования:
+    *   Генерируется **один** сервис `postgres` в `docker-compose.hsm.yml`.
+    *   Параметры объединяются в список (например, `CREATE_DATABASES=vector_db,graph_db`).
+
+### Алгоритм слияния
+1.  **Идентификация**: Поиск сервисов с одинаковым `registry_id`.
+2.  **Объединение ENV**: Переменные окружения дополняются. Если ключи совпадают, HSM пытается объединить значения (через запятую или другой разделитель, указанный в манифесте сервиса).
+3.  **Объединение Ports/Volumes**: Списки портов и томов объединяются (идемпотентно).
+
+## Обоснование дизайна и лучшие практики
+
+Выбранный подход **"Deployment Profiles in Registry"** следует ключевым архитектурным принципам 2026 года:
+
+1.  **Separation of Concerns (Разделение ответственности)**:
+    *   `hsm.yaml` отвечает за **бизнес-логику стэка** (что нам нужно).
+    *   `Registry` отвечает за **инфраструктурную реализацию** (как это запустить или где это найти).
+2.  **Declarative Infrastructure (Декларативность)**: Мы описываем *желаемое состояние* подключения, а не императивные шаги по его настройке.
+3.  **Don't Repeat Yourself (DRY)**: Конфигурация внешнего сервиса (например, корпоративного Qdrant) описывается один раз в реестре и переиспользуется всеми проектами.
+4.  **Environment Agnosticism**: Код пакетов не знает, работает он с локальным Docker или внешним облаком. Он просто потребляет стандартные переменные окружения, которые HSM подготавливает на основе выбранного профиля.
+5.  **Security by Design**: Использование интерполяции `${VAR}` в профилях гарантирует, что чувствительные данные никогда не попадут в реестр или манифест проекта, оставаясь в защищенном окружении разработчика или CI/CD.
+
 ## Схема связей (Data Flow)
 
 ```mermaid
 graph TD
-    subgraph Registry [HSM Registry]
+    subgraph Project [1. hsm.yaml]
+        UserSelection[Selection: qdrant]
+        UserProfile[Profile: external-prod]
+    end
+
+    subgraph Registry [2. HSM Registry]
         Pkg[Package: rag4code-qdrant]
         Cont[Container: qdrant]
         
@@ -179,18 +215,16 @@ graph TD
         Pkg -->|implies| Cont
     end
 
-    subgraph Project [hsm.yaml]
-        UserSelection[Selection: qdrant]
-        UserProfile[Profile: external-prod]
-        
-        UserSelection --> Cont
-        UserProfile --> ProfProd
-    end
-
-    subgraph Runtime [Environment]
+    subgraph Runtime [3. Environment]
         EnvVars[ENV: QDRANT_HOST=192.168.1.50]
+        Venv[.venv / Containers]
     end
 
+    %% Связи между уровнями
+    UserSelection -.->|references| Cont
+    UserProfile -.->|selects| ProfProd
+    
     ProfProd -->|injects config| EnvVars
     Pkg -->|consumes| EnvVars
+    EnvVars --> Venv
 ```
