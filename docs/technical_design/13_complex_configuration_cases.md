@@ -178,67 +178,113 @@ services:
 
 ## Кейс 3: "Комбинированный стек" (Hybrid Stack)
 
-**Задача**: Реализовать сложную схему, где разные части системы работают в разных режимах:
-*   **Пакет `rag-engine` (Prod)** и **Пакет `rag-worker` (Dev)** подключаются к одному внешнему Qdrant.
-*   **Пакет `rag-debug-tool` (Dev)** подключается к локальному Ollama.
+**Задача**: Реализовать сложную схему, где разные части системы работают в разных режимах развертывания одновременно.
 
 ```mermaid
 graph TD
     subgraph Project [hsm.yaml]
-        direction TB
-        subgraph Pkgs [Packages]
-            P1[rag-engine: prod]
-            P2[rag-worker: dev]
-            P3[rag-debug-tool: dev]
-        end
-        
-        subgraph SvcCfg [Service Config]
-            QdrantCfg[Qdrant: profile external-cloud]
-            OllamaCfg[Ollama: profile managed-local]
-        end
+        P1[tree-sitter-chunker: dev]
+        P2[qdrant-client: prod]
+        P3[neo4j-client]
     end
 
-    subgraph Registry [HSM Registry]
-        P1 & P2 -->|implies| Qdrant[Service: Qdrant]
-        P3 -->|implies| Ollama[Service: Ollama]
-        
-        Qdrant -.-> CloudProf[Profile: external-cloud]
-        Ollama -.-> LocalProf[Profile: managed-local]
+    subgraph Services [Services Configuration]
+        S1[qdrant-service: external]
+        S2[graph-builder-service: managed-dev]
     end
 
-    subgraph Runtime [Environment]
-        CloudQ[(Cloud Qdrant)]
-        LocalO[Local Container: Ollama]
-        
-        EnvQ[ENV: QDRANT_HOST=cloud.io]
-        EnvO[ENV: OLLAMA_HOST=localhost]
-    end
-
-    CloudProf --> EnvQ
-    LocalProf --> LocalO
-    LocalProf --> EnvO
-    
-    EnvQ --> P1 & P2
-    EnvO --> P3
+    P1 & P2 --> S1
+    P3 --> S2
 ```
 
 **Как это работает**:
-HSM одновременно управляет и внешними связями, и локальными контейнерами. Он гарантирует, что `rag-engine` и `rag-worker` получат одинаковые настройки для облачной БД, в то время как отладочный инструмент будет работать с локальной нейросетью.
+HSM одновременно управляет и внешними связями, и локальными контейнерами, обеспечивая прозрачное взаимодействие между ними:
+*   **Внешний сервис**: `tree-sitter-chunker` и `qdrant-client` автоматически получают параметры подключения (host, port, api_key) к внешнему Qdrant из соответствующего профиля в реестре.
+*   **Локальный сервис**: `neo4j-client` подключается к `graph-builder-service`, который HSM автоматически запускает как локальный контейнер через Docker Compose.
+*   **Изоляция**: Разработчик просто выбирает нужные пакеты и профили, а HSM берет на себя всю "грязную работу" по пробросу переменных окружения и оркестрации.
 
 ---
 
 ## Кейс 4: "Симметричная разработка" (Editable Stack)
 
-**Задача**: Нужно одновременно вносить изменения в два зависимых пакета (например, в ядро системы и в плагин).
+**Задача**: Нужно одновременно вносить изменения в клиентский пакет и сервис, с которым он работает (например, `neo4j-client` и `graph-builder-service`).
 
 **Как это делает HSM**:
-Использование **Editable Sources** в реестре. При выполнении `hsm sync`, HSM (через `uv`) установит пакет как ссылку на локальную папку. Любое изменение кода в папке разработчика мгновенно отразится на работе всего стэка без переустановки.
+Использование **Editable Sources** в реестре. При выполнении `hsm sync`, HSM (через `uv`) установит пакет как ссылку на локальную папку, а сервис запустит из локального контекста сборки. Любое изменение кода в папках разработчика мгновенно отразится на работе всего стэка.
+
+**Примеры конфигураций**:
+
+1.  **Пакет (Neo4j Client)** (`registry/packages/neo4j-client.yaml`):
+    ```yaml
+    name: neo4j-client
+    sources:
+      dev:
+        type: local
+        path: "../../packages/neo4j-client"
+        editable: true # Установка через 'uv pip install -e'
+    ```
+
+2.  **Сервис (Graph Builder)** (`registry/containers/graph-builder-service.yaml`):
+    ```yaml
+    name: graph-builder-service
+    sources:
+      dev:
+        type: build
+        path: "../../services/graph-builder"
+        dockerfile: "Dockerfile.dev"
+    ```
+
+3.  **Манифест проекта** (`hsm.yaml`):
+    ```yaml
+    packages:
+      - neo4j-client: dev
+    services:
+      container_groups:
+        graph-services:
+          selection: graph-builder-service
+          profile: managed-dev
+          mode: dev
+    ```
 
 ---
 
 ## Кейс 5: "Секреты без утечек" (Zero-Leak Secrets)
 
-**Задача**: Нужно передать API ключи в контейнеры и пакеты, не сохраняя их в Git.
+**Задача**: Нужно передать API ключи и порты в контейнеры и пакеты (например, для `neo4j-client: prod` и `graph-builder-service: managed-prod`), не сохраняя их в Git.
 
 **Как это делает HSM**:
-**Variable Interpolation**. HSM считывает значение из системного окружения или `.env` файла в момент синхронизации (`${MY_SECRET}`). В YAML-файлах реестра и проекта остаются только безопасные ссылки.
+**Variable Interpolation**. HSM считывает значения из системного окружения или `.env` файла в момент синхронизации. В YAML-файлах реестра и проекта остаются только безопасные ссылки.
+
+**Примеры конфигураций**:
+
+1.  **Пакет (Neo4j Client)** (`registry/packages/neo4j-client.yaml`):
+    ```yaml
+    name: neo4j-client
+    env:
+      NEO4J_PASSWORD: "${NEO4J_PROD_PASSWORD}"
+      NEO4J_PORT: "${NEO4J_PROD_PORT}"
+    ```
+
+2.  **Сервис (Graph Builder)** (`registry/containers/graph-builder-service.yaml`):
+    ```yaml
+    name: graph-builder-service
+    deployment_profiles:
+      managed-prod:
+        mode: managed
+        ports:
+          - "${NEO4J_PROD_PORT}:7474"
+        env:
+          DB_PASSWORD: "${NEO4J_PROD_PASSWORD}"
+    ```
+
+3.  **Манифест проекта** (`hsm.yaml`):
+    ```yaml
+    packages:
+      - neo4j-client: prod
+    services:
+      container_groups:
+        graph-services:
+          selection: graph-builder-service
+          profile: managed-prod
+          mode: prod
+    ```
