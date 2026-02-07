@@ -1,0 +1,8 @@
+{
+  "label": "📝 ADR",
+  "position": 2,
+  "link": {
+    "type": "generated-index",
+    "description": "Architecture Decision Records — записи принятых архитектурных решений."
+  }
+}
