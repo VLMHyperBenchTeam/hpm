@@ -26,16 +26,18 @@ class UvAdapter(BasePackageManagerAdapter):
         logger.info(f"Syncing {len(packages)} packages with uv...")
         
         # 1. Update pyproject.toml dependencies
-        if self.pyproject_path.exists():
-            with open(self.pyproject_path, "r") as f:
-                config = tomlkit.parse(f.read())
-            
-            # Ensure project section exists
-            project = config.setdefault("project", tomlkit.table())
-            project["dependencies"] = packages
-            
-            with open(self.pyproject_path, "w") as f:
-                f.write(tomlkit.dumps(config))
+        if not self.pyproject_path.exists():
+            raise FileNotFoundError(f"pyproject.toml not found at {self.pyproject_path}. Run 'hsm init' first.")
+
+        with open(self.pyproject_path, "r") as f:
+            config = tomlkit.parse(f.read())
+        
+        # Ensure project section exists
+        project = config.setdefault("project", tomlkit.table())
+        project["dependencies"] = packages
+        
+        with open(self.pyproject_path, "w") as f:
+            f.write(tomlkit.dumps(config))
 
         # 2. Run uv sync
         cmd = self._get_base_cmd() + ["sync"]
@@ -61,6 +63,16 @@ class UvAdapter(BasePackageManagerAdapter):
         """Initialize a new library with uv init --lib."""
         path.mkdir(parents=True, exist_ok=True)
         cmd = self._get_base_cmd() + ["init", "--lib"]
+        try:
+            subprocess.run(cmd, check=True, cwd=path)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"uv init failed: {e}")
+            raise
+
+    def init_project(self, path: Path):
+        """Initialize a new project with uv init."""
+        path.mkdir(parents=True, exist_ok=True)
+        cmd = self._get_base_cmd() + ["init"]
         try:
             subprocess.run(cmd, check=True, cwd=path)
         except subprocess.CalledProcessError as e:

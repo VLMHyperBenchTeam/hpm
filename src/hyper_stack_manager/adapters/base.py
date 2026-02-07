@@ -38,6 +38,15 @@ class BasePackageManagerAdapter(ABC):
         """
         pass
 
+    @abstractmethod
+    def init_project(self, path: Path):
+        """Initialize a new project at the given path.
+
+        Args:
+            path: Path where to initialize the project.
+        """
+        pass
+
 
 class BaseContainerAdapter(ABC):
     """Abstract base class for container service adapters (e.g., docker, podman)."""
