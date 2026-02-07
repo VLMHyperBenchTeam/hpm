@@ -2,7 +2,7 @@ import logging
 import yaml
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Union
-from ..models import PackageManifest, ContainerManifest, RegistryGroup
+from ..models import LibraryManifest, ServiceManifest, RegistryGroup
 
 logger = logging.getLogger(__name__)
 
@@ -14,23 +14,29 @@ class RegistryManager:
 
     def search(self, query: str) -> Dict[str, List[str]]:
         """Search the registry for components."""
-        results = {"packages": [], "containers": [], "groups": []}
+        results = {"libraries": [], "services": [], "groups": []}
         query = query.lower()
         
-        for category in ["packages", "containers", "package_groups", "container_groups"]:
+        mapping = {
+            "libraries": "libraries",
+            "services": "services",
+            "library_groups": "groups",
+            "service_groups": "groups"
+        }
+        
+        for category, key in mapping.items():
             path = self.registry_path / category
             if path.exists():
                 for f in path.glob("*.yaml"):
                     if query in f.stem.lower():
-                        key = "groups" if "group" in category else category
                         results[key].append(f.stem)
         return results
 
-    def add_package(self, name: str, version: str, description: Optional[str] = None, 
+    def add_library(self, name: str, version: str, description: Optional[str] = None,
                     prod_source: Optional[Dict] = None, dev_source: Optional[Dict] = None):
-        """Add a package manifest to the registry."""
-        packages_dir = self.registry_path / "packages"
-        packages_dir.mkdir(parents=True, exist_ok=True)
+        """Add a library manifest to the registry."""
+        libraries_dir = self.registry_path / "libraries"
+        libraries_dir.mkdir(parents=True, exist_ok=True)
 
         manifest_data = {
             "name": name,
@@ -43,24 +49,24 @@ class RegistryManager:
             }
         }
 
-        manifest_file = packages_dir / f"{name}.yaml"
+        manifest_file = libraries_dir / f"{name}.yaml"
         with open(manifest_file, "w") as f:
             yaml.dump(manifest_data, f, sort_keys=False)
         
-        logger.info(f"Package '{name}' added to registry at {manifest_file}")
+        logger.info(f"Library '{name}' added to registry at {manifest_file}")
 
-    def add_container(self, name: str, description: Optional[str] = None,
+    def add_service(self, name: str, description: Optional[str] = None,
                       prod_source: Optional[Dict] = None, dev_source: Optional[Dict] = None,
                       ports: List[str] = None, volumes: List[str] = None, env: Dict[str, str] = None,
                       container_name: Optional[str] = None, network_aliases: List[str] = None):
-        """Add a container manifest to the registry."""
-        containers_dir = self.registry_path / "containers"
-        containers_dir.mkdir(parents=True, exist_ok=True)
+        """Add a service manifest to the registry."""
+        services_dir = self.registry_path / "services"
+        services_dir.mkdir(parents=True, exist_ok=True)
 
         manifest_data = {
             "name": name,
             "description": description,
-            "type": "container",
+            "type": "service",
             "container_name": container_name,
             "network_aliases": network_aliases or [],
             "ports": ports or [],
@@ -72,16 +78,16 @@ class RegistryManager:
             }
         }
 
-        manifest_file = containers_dir / f"{name}.yaml"
+        manifest_file = services_dir / f"{name}.yaml"
         with open(manifest_file, "w") as f:
             yaml.dump(manifest_data, f, sort_keys=False)
         
-        logger.info(f"Container '{name}' added to registry at {manifest_file}")
+        logger.info(f"Service '{name}' added to registry at {manifest_file}")
 
     def add_group(self, name: str, group_type: str, strategy: str, options: List[Union[str, Dict]],
                   description: Optional[str] = None, comment: Optional[str] = None):
         """Add a group manifest to the registry."""
-        category = "package_groups" if group_type == "package_group" else "container_groups"
+        category = "library_groups" if group_type == "library_group" else "service_group"
         groups_dir = self.registry_path / category
         groups_dir.mkdir(parents=True, exist_ok=True)
 
@@ -112,7 +118,7 @@ class RegistryManager:
     def remove(self, name: str):
         """Remove a component from the registry."""
         found = False
-        for category in ["packages", "containers", "package_groups", "container_groups"]:
+        for category in ["libraries", "services", "library_groups", "service_groups"]:
             path = self.registry_path / category / f"{name}.yaml"
             if path.exists():
                 path.unlink()
@@ -124,7 +130,7 @@ class RegistryManager:
 
     def add_option_to_group(self, group_name: str, option: str):
         """Add an option to a group in the registry."""
-        for category in ["package_groups", "container_groups"]:
+        for category in ["library_groups", "service_groups"]:
             path = self.registry_path / category / f"{group_name}.yaml"
             if path.exists():
                 with open(path, "r") as f:
@@ -141,7 +147,7 @@ class RegistryManager:
 
     def remove_option_from_group(self, group_name: str, option: str):
         """Remove an option from a group in the registry."""
-        for category in ["package_groups", "container_groups"]:
+        for category in ["library_groups", "service_groups"]:
             path = self.registry_path / category / f"{group_name}.yaml"
             if path.exists():
                 with open(path, "r") as f:
@@ -159,7 +165,7 @@ class RegistryManager:
 
     def get_details(self, name: str) -> Optional[Dict[str, Any]]:
         """Get detailed metadata for a component from the registry."""
-        for category in ["packages", "containers", "package_groups", "container_groups"]:
+        for category in ["libraries", "services", "library_groups", "service_groups"]:
             path = self.registry_path / category / f"{name}.yaml"
             if path.exists():
                 with open(path, "r") as f:

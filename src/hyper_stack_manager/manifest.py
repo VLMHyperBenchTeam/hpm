@@ -28,12 +28,15 @@ class HSMProjectManifest:
         if not self.path.exists():
             return {
                 "project": {"name": "new-project", "version": "0.1.0"},
-                "dependencies": {
+                "libraries": {
                     "package_manager": "uv",
-                    "package_groups": {},
-                    "packages": [],
+                    "groups": {},
+                    "standalone": [],
                 },
-                "services": {"container_groups": {}},
+                "services": {
+                    "groups": {},
+                    "standalone": [],
+                },
             }
         with open(self.path, "r") as f:
             return self.yaml.load(f)
@@ -50,16 +53,25 @@ class HSMProjectManifest:
         Returns:
             Manager name (e.g., 'uv').
         """
-        return self.data.get("dependencies", {}).get("package_manager", "uv")
+        return self.data.get("libraries", {}).get("package_manager", "uv")
 
     @property
-    def package_groups(self) -> Dict[str, Any]:
-        """Get the configured package groups.
+    def library_groups(self) -> Dict[str, Any]:
+        """Get the configured library groups.
 
         Returns:
             Dictionary of group names and their configurations.
         """
-        return self.data.get("dependencies", {}).get("package_groups", {})
+        return self.data.get("libraries", {}).get("groups", {})
+
+    @property
+    def service_groups(self) -> Dict[str, Any]:
+        """Get the configured service groups.
+
+        Returns:
+            Dictionary of group names and their configurations.
+        """
+        return self.data.get("services", {}).get("groups", {})
 
     def set_manager(self, manager_name: str):
         """Set the package manager for the project.
@@ -67,17 +79,17 @@ class HSMProjectManifest:
         Args:
             manager_name: Name of the manager (e.g., 'uv').
         """
-        deps = self.data.setdefault("dependencies", {})
-        deps["package_manager"] = manager_name
+        libs = self.data.setdefault("libraries", {})
+        libs["package_manager"] = manager_name
 
     @property
-    def packages(self) -> List[str]:
-        """Get the list of standalone packages.
+    def libraries(self) -> List[str]:
+        """Get the list of standalone libraries.
 
         Returns:
-            List of package names.
+            List of library names.
         """
-        pkgs = self.data.get("dependencies", {}).get("packages", [])
+        pkgs = self.data.get("libraries", {}).get("standalone", [])
         result = []
         for pkg in pkgs:
             if isinstance(pkg, str):
@@ -86,37 +98,78 @@ class HSMProjectManifest:
                 result.append(pkg["name"])
         return result
 
-    def add_package(self, name: str):
-        """Add a standalone package to the manifest.
+    @property
+    def services(self) -> List[str]:
+        """Get the list of standalone services.
+
+        Returns:
+            List of service names.
+        """
+        srvs = self.data.get("services", {}).get("standalone", [])
+        result = []
+        for srv in srvs:
+            if isinstance(srv, str):
+                result.append(srv)
+            elif isinstance(srv, dict) and "name" in srv:
+                result.append(srv["name"])
+        return result
+
+    def add_library(self, name: str):
+        """Add a standalone library to the manifest.
 
         Args:
-            name: Package name.
+            name: Library name.
         """
-        deps = self.data.setdefault("dependencies", {})
-        pkgs = deps.setdefault("packages", [])
+        libs = self.data.setdefault("libraries", {})
+        pkgs = libs.setdefault("standalone", [])
         if name not in pkgs:
             pkgs.append(name)
 
-    def remove_package(self, name: str):
-        """Remove a standalone package from the manifest.
+    def add_service(self, name: str):
+        """Add a standalone service to the manifest.
 
         Args:
-            name: Package name.
+            name: Service name.
         """
-        pkgs = self.data.get("dependencies", {}).get("packages", [])
+        srvs_root = self.data.setdefault("services", {})
+        srvs = srvs_root.setdefault("standalone", [])
+        if name not in srvs:
+            srvs.append(name)
+
+    def remove_library(self, name: str):
+        """Remove a standalone library from the manifest.
+
+        Args:
+            name: Library name.
+        """
+        pkgs = self.data.get("libraries", {}).get("standalone", [])
         if name in pkgs:
             pkgs.remove(name)
 
+    def remove_service(self, name: str):
+        """Remove a standalone service from the manifest.
+
+        Args:
+            name: Service name.
+        """
+        srvs = self.data.get("services", {}).get("standalone", [])
+        if name in srvs:
+            srvs.remove(name)
+
     def remove_from_group(self, group_name: str, option: str):
-        """Remove an option from a package group.
+        """Remove an option from a library or service group.
 
         Args:
             group_name: Name of the group.
             option: Option name to remove.
         """
-        groups = self.data.get("dependencies", {}).get("package_groups", {})
+        # Check libraries
+        groups = self.data.get("libraries", {}).get("groups", {})
         if group_name not in groups:
-            return
+            # Check services
+            groups = self.data.get("services", {}).get("groups", {})
+            if group_name not in groups:
+                return
 
         group_cfg = groups[group_name]
         selection = group_cfg.get("selection")
@@ -130,25 +183,34 @@ class HSMProjectManifest:
             del groups[group_name]
 
     def remove_group(self, group_name: str):
-        """Remove a package group entirely from the manifest.
+        """Remove a library or service group entirely from the manifest.
 
         Args:
             group_name: Name of the group.
         """
-        groups = self.data.get("dependencies", {}).get("package_groups", {})
+        # Check libraries
+        groups = self.data.get("libraries", {}).get("groups", {})
+        if group_name in groups:
+            del groups[group_name]
+            return
+
+        # Check services
+        groups = self.data.get("services", {}).get("groups", {})
         if group_name in groups:
             del groups[group_name]
 
-    def add_option_to_group(self, group_name: str, option: str, strategy: str):
-        """Add or set an option in a package group.
+    def add_option_to_group(self, group_name: str, option: str, strategy: str, is_service: bool = False):
+        """Add or set an option in a library or service group.
 
         Args:
             group_name: Name of the group.
             option: Option name to add/set.
             strategy: Group strategy (1-of-N or M-of-N).
+            is_service: Whether this is a service group.
         """
-        deps = self.data.setdefault("dependencies", {})
-        groups = deps.setdefault("package_groups", {})
+        root_key = "services" if is_service else "libraries"
+        root = self.data.setdefault(root_key, {})
+        groups = root.setdefault("groups", {})
         
         group_cfg = groups.setdefault(group_name, {"strategy": strategy, "selection": None})
         
@@ -164,23 +226,26 @@ class HSMProjectManifest:
                 if option not in selection:
                     selection.append(option)
 
-    def set_package_group(
+    def set_group(
         self,
         group_name: str,
         selection: Union[str, List[str]],
         strategy: str,
+        is_service: bool = False,
         comment: Optional[str] = None,
     ):
-        """Set or update a package group in the manifest.
+        """Set or update a library or service group in the manifest.
 
         Args:
             group_name: Name of the group.
             selection: Selected option(s).
             strategy: Selection strategy (1-of-N or M-of-N).
+            is_service: Whether this is a service group.
             comment: Optional comment to place above the group.
         """
-        deps = self.data.setdefault("dependencies", {})
-        groups = deps.setdefault("package_groups", {})
+        root_key = "services" if is_service else "libraries"
+        root = self.data.setdefault(root_key, {})
+        groups = root.setdefault("groups", {})
 
         group_data = {"strategy": strategy, "selection": selection}
 
@@ -190,21 +255,21 @@ class HSMProjectManifest:
             # Add comment using ruamel.yaml API
             groups.yaml_set_comment_before_after_key(group_name, before=comment)
 
-    def set_package_mode(self, name: str, mode: str):
-        """Set the mode (dev/prod) for a package or group in the manifest.
+    def set_mode(self, name: str, mode: str):
+        """Set the mode (dev/prod) for a component or group in the manifest.
 
         Args:
             name: Component or group name.
             mode: Mode ('dev' or 'prod').
         """
-        # 1. Check package groups
-        groups = self.data.get("dependencies", {}).get("package_groups", {})
+        # 1. Check library groups
+        groups = self.data.get("libraries", {}).get("groups", {})
         if name in groups:
             groups[name]["mode"] = mode
             return
 
-        # 2. Check standalone packages
-        pkgs = self.data.get("dependencies", {}).get("packages", [])
+        # 2. Check standalone libraries
+        pkgs = self.data.get("libraries", {}).get("standalone", [])
         for i, pkg in enumerate(pkgs):
             if isinstance(pkg, str) and pkg == name:
                 pkgs[i] = {"name": name, "mode": mode}
@@ -213,61 +278,61 @@ class HSMProjectManifest:
                 pkg["mode"] = mode
                 return
 
-        # 3. Check container groups
-        c_groups = self.data.get("services", {}).get("container_groups", {})
-        if name in c_groups:
-            c_groups[name]["mode"] = mode
+        # 3. Check service groups
+        s_groups = self.data.get("services", {}).get("groups", {})
+        if name in s_groups:
+            s_groups[name]["mode"] = mode
             return
 
-        # 4. Check standalone containers
-        containers = self.data.get("services", {}).get("containers", [])
-        for i, cont in enumerate(containers):
-            if isinstance(cont, str) and cont == name:
-                containers[i] = {"name": name, "mode": mode}
+        # 4. Check standalone services
+        services = self.data.get("services", {}).get("standalone", [])
+        for i, srv in enumerate(services):
+            if isinstance(srv, str) and srv == name:
+                services[i] = {"name": name, "mode": mode}
                 return
-            elif isinstance(cont, dict) and cont.get("name") == name:
-                cont["mode"] = mode
+            elif isinstance(srv, dict) and srv.get("name") == name:
+                srv["mode"] = mode
                 return
         
         # Fallback: store in a generic modes section if not found in structure
         modes = self.data.setdefault("modes", {})
         modes[name] = mode
 
-    def get_package_mode(self, name: str) -> str:
-        """Get the mode for a package or group. Defaults to 'prod'."""
-        # 1. Check package groups
-        groups = self.data.get("dependencies", {}).get("package_groups", {})
+    def get_mode(self, name: str) -> str:
+        """Get the mode for a component or group. Defaults to 'prod'."""
+        # 1. Check library groups
+        groups = self.data.get("libraries", {}).get("groups", {})
         if name in groups and "mode" in groups[name]:
             return groups[name]["mode"]
         
-        # Check if name is a selection in any package group
+        # Check if name is a selection in any library group
         for g_cfg in groups.values():
             selection = g_cfg.get("selection")
             if selection == name or (isinstance(selection, (list, tuple)) and name in selection):
                 return g_cfg.get("mode", "prod")
 
-        # 2. Check standalone packages
-        pkgs = self.data.get("dependencies", {}).get("packages", [])
+        # 2. Check standalone libraries
+        pkgs = self.data.get("libraries", {}).get("standalone", [])
         for pkg in pkgs:
             if isinstance(pkg, dict) and pkg.get("name") == name:
                 return pkg.get("mode", "prod")
 
-        # 3. Check container groups
-        c_groups = self.data.get("services", {}).get("container_groups", {})
-        if name in c_groups and "mode" in c_groups[name]:
-            return c_groups[name]["mode"]
+        # 3. Check service groups
+        s_groups = self.data.get("services", {}).get("groups", {})
+        if name in s_groups and "mode" in s_groups[name]:
+            return s_groups[name]["mode"]
             
-        # Check if name is a selection in any container group
-        for g_cfg in c_groups.values():
+        # Check if name is a selection in any service group
+        for g_cfg in s_groups.values():
             selection = g_cfg.get("selection")
             if selection == name or (isinstance(selection, (list, tuple)) and name in selection):
                 return g_cfg.get("mode", "prod")
 
-        # 4. Check standalone containers
-        containers = self.data.get("services", {}).get("containers", [])
-        for cont in containers:
-            if isinstance(cont, dict) and cont.get("name") == name:
-                return cont.get("mode", "prod")
+        # 4. Check standalone services
+        services = self.data.get("services", {}).get("standalone", [])
+        for srv in services:
+            if isinstance(srv, dict) and srv.get("name") == name:
+                return srv.get("mode", "prod")
 
         # 5. Check generic modes section
         return self.data.get("modes", {}).get(name, "prod")

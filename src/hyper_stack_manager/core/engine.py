@@ -78,7 +78,7 @@ class HSMCore:
             logger.info(f"Created {self.manifest.path}")
 
         # Ensure registry structure
-        for sub_dir in ["packages", "containers", "package_groups", "container_groups"]:
+        for sub_dir in ["libraries", "services", "library_groups", "service_groups"]:
             path = self.registry_path / sub_dir
             path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Ensured registry directory: {path}")
@@ -105,12 +105,12 @@ class HSMCore:
         # Note: This is a simplified verification.
         # In a real scenario, we'd resolve the full expected list.
         # For now, we check if the explicitly requested packages are present.
-        for pkg_name in self.manifest.packages:
+        for pkg_name in self.manifest.libraries:
             if pkg_name not in installed:
                 results["packages"]["missing"].append(pkg_name)
                 results["packages"]["status"] = "error"
 
-        # 2. Verify Containers
+        # 2. Verify Services (Containers)
         running = self.inspector.get_running_containers()
         running_names = []
         for c in running:
@@ -119,10 +119,9 @@ class HSMCore:
             if name:
                 running_names.append(name)
 
-        # Check standalone containers
-        standalone_containers = self.manifest.data.get("services", {}).get("containers", [])
-        for cont in standalone_containers:
-            name = cont.get("name") if isinstance(cont, dict) else cont
+        # Check standalone services
+        standalone_services = self.manifest.services
+        for name in standalone_services:
             if name not in running_names:
                 results["containers"]["missing"].append(name)
                 results["containers"]["status"] = "error"
@@ -136,11 +135,11 @@ class HSMCore:
     def search_registry(self, query: str) -> Dict[str, List[str]]:
         return self.registry.search(query)
 
-    def add_package_to_registry(self, *args, **kwargs):
-        self.registry.add_package(*args, **kwargs)
+    def add_library_to_registry(self, *args, **kwargs):
+        self.registry.add_library(*args, **kwargs)
 
-    def add_container_to_registry(self, *args, **kwargs):
-        self.registry.add_container(*args, **kwargs)
+    def add_service_to_registry(self, *args, **kwargs):
+        self.registry.add_service(*args, **kwargs)
 
     def add_group_to_registry(self, *args, **kwargs):
         self.registry.add_group(*args, **kwargs)
@@ -169,46 +168,52 @@ class HSMCore:
         self.registry.registry_path = self.registry_path
         logger.info(f"Registry path set to {path}")
 
-    def set_package_mode(self, name: str, mode: str):
-        self.manifest.set_package_mode(name, mode)
+    def set_mode(self, name: str, mode: str):
+        self.manifest.set_mode(name, mode)
         self.manifest.save()
-        logger.info(f"Set mode for package {name} to {mode}")
+        logger.info(f"Set mode for {name} to {mode}")
 
     def set_global_mode(self, mode: str):
-        # 1. Standalone packages
-        for pkg in self.manifest.packages:
-            name = pkg.get("name") if isinstance(pkg, dict) else pkg
-            self.manifest.set_package_mode(name, mode)
+        # 1. Standalone libraries
+        for name in self.manifest.libraries:
+            self.manifest.set_mode(name, mode)
         
-        # 2. Package groups
-        for group_name in self.manifest.package_groups:
-            self.manifest.set_package_mode(group_name, mode)
+        # 2. Library groups
+        for group_name in self.manifest.library_groups:
+            self.manifest.set_mode(group_name, mode)
 
-        # 3. Container groups
-        container_groups = self.manifest.data.get("services", {}).get("container_groups", {})
-        for group_name in container_groups:
-            self.manifest.set_package_mode(group_name, mode)
+        # 3. Service groups
+        for group_name in self.manifest.service_groups:
+            self.manifest.set_mode(group_name, mode)
 
-        # 4. Standalone containers
-        standalone_containers = self.manifest.data.get("services", {}).get("containers", [])
-        for cont in standalone_containers:
-            name = cont.get("name") if isinstance(cont, dict) else cont
-            self.manifest.set_package_mode(name, mode)
+        # 4. Standalone services
+        for name in self.manifest.services:
+            self.manifest.set_mode(name, mode)
         
         self.manifest.save()
         logger.info(f"Set global project mode to {mode}")
 
-    def add_package(self, name: str):
-        self.manifest.add_package(name)
+    def add_library(self, name: str):
+        self.manifest.add_library(name)
         self.manifest.save()
-        logger.info(f"Added package {name} to hsm.yaml")
+        logger.info(f"Added library {name} to hsm.yaml")
 
-    def remove_package(self, name: str):
-        self.manifest.remove_package(name)
+    def add_service(self, name: str):
+        self.manifest.add_service(name)
         self.manifest.save()
-        logger.info(f"Removed package {name} from hsm.yaml")
+        logger.info(f"Added service {name} to hsm.yaml")
 
-    def remove_package_group(self, group_name: str, option: str):
+    def remove_library(self, name: str):
+        self.manifest.remove_library(name)
+        self.manifest.save()
+        logger.info(f"Removed library {name} from hsm.yaml")
+
+    def remove_service(self, name: str):
+        self.manifest.remove_service(name)
+        self.manifest.save()
+        logger.info(f"Removed service {name} from hsm.yaml")
+
+    def remove_group_option(self, group_name: str, option: str):
         self.manifest.remove_from_group(group_name, option)
         self.manifest.save()
         logger.info(f"Removed {option} from group {group_name} in hsm.yaml")
@@ -218,14 +223,14 @@ class HSMCore:
         self.manifest.save()
         logger.info(f"Removed group {group_name} from hsm.yaml")
 
-    def add_package_group(self, group_name: str, option: str):
-        # Logic for adding group selection (reused from old core.py)
+    def add_group(self, group_name: str, option: str):
+        # Logic for adding group selection
         from ..models import RegistryGroup
-        group_type = "package_group"
-        group_path = self.registry_path / "package_groups" / f"{group_name}.yaml"
+        group_type = "library_group"
+        group_path = self.registry_path / "library_groups" / f"{group_name}.yaml"
         if not group_path.exists():
-            group_path = self.registry_path / "container_groups" / f"{group_name}.yaml"
-            group_type = "container_group"
+            group_path = self.registry_path / "service_groups" / f"{group_name}.yaml"
+            group_type = "service_group"
             
         if not group_path.exists():
             raise FileNotFoundError(f"Group {group_name} not found in registry")
@@ -235,21 +240,15 @@ class HSMCore:
             group = RegistryGroup(**data)
             
         comment = data.get("comment")
+        is_service = group_type == "service_group"
             
-        if group_type == "package_group":
-            self.manifest.set_package_group(
-                group_name=group_name,
-                selection=option,
-                strategy=group.strategy,
-                comment=comment
-            )
-        else:
-            services = self.manifest.data.setdefault("services", {})
-            groups = services.setdefault("container_groups", {})
-            groups[group_name] = {
-                "strategy": group.strategy,
-                "selection": option
-            }
+        self.manifest.set_group(
+            group_name=group_name,
+            selection=option,
+            strategy=group.strategy,
+            is_service=is_service,
+            comment=comment
+        )
 
         # Handle Implies
         selected_opt = next((opt for opt in group.options if opt.name == option), None)
@@ -268,7 +267,12 @@ class HSMCore:
         logger.info(f"Added group {group_name} with selection {option} to hsm.yaml")
 
     def add_group_option(self, group_name: str, option: str):
-        group_path = self.registry_path / "package_groups" / f"{group_name}.yaml"
+        group_path = self.registry_path / "library_groups" / f"{group_name}.yaml"
+        is_service = False
+        if not group_path.exists():
+            group_path = self.registry_path / "service_groups" / f"{group_name}.yaml"
+            is_service = True
+            
         if not group_path.exists():
             raise FileNotFoundError(f"Group {group_name} not found in registry")
             
@@ -276,16 +280,11 @@ class HSMCore:
             data = yaml.safe_load(f)
             strategy = data.get("strategy", "1-of-N")
 
-        self.manifest.add_option_to_group(group_name, option, strategy)
+        self.manifest.add_option_to_group(group_name, option, strategy, is_service=is_service)
         self.manifest.save()
         logger.info(f"Added option {option} to group {group_name} in hsm.yaml")
 
-    def remove_group_option(self, group_name: str, option: str):
-        self.manifest.remove_from_group(group_name, option)
-        self.manifest.save()
-        logger.info(f"Removed option {option} from group {group_name} in hsm.yaml")
-
-    def init_package(self, name: str, path: Optional[Path] = None, register: bool = True):
+    def init_library(self, name: str, path: Optional[Path] = None, register: bool = True):
         if path is None:
             path = self.project_root / "packages" / name
         
@@ -297,10 +296,10 @@ class HSMCore:
 
         if register:
             rel_path = os.path.relpath(path, self.project_root)
-            self.add_package_to_registry(
+            self.add_library_to_registry(
                 name=name,
                 version="0.1.0",
-                description=f"Local package {name}",
+                description=f"Local library {name}",
                 prod_source={"type": "local", "path": rel_path},
                 dev_source={"type": "local", "path": rel_path, "editable": True}
             )
