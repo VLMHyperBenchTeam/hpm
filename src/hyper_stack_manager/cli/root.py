@@ -69,16 +69,30 @@ def cli_list():
     tree = Tree(f"[bold blue]Project: {manifest.data.get('project', {}).get('name', 'unknown')}[/bold blue]")
     
     def get_mode_str(name: str):
-        mode = manifest.get_package_mode(name)
+        mode = manifest.get_mode(name)
         icon = "🛠️ " if mode == "dev" else "📦"
         return f"[dim]({mode} {icon})[/dim]"
 
-    # 1. Dependencies (Packages)
-    deps = tree.add("Dependencies (Packages)")
+    def get_runtime_info(name: str):
+        details = hsm.get_component_details(name)
+        if not details:
+            return ""
+        
+        mode = manifest.get_mode(name)
+        # Check if it's a service manifest
+        if details.get("type") == "service":
+            profiles = details.get("deployment_profiles", {})
+            profile = profiles.get(mode, profiles.get("prod", {}))
+            runtime = profile.get("runtime", "docker")
+            return f" [blue]<{runtime}>[/blue]"
+        return ""
+
+    # 1. Libraries
+    libs_root = tree.add("Libraries")
     
     # Groups
-    groups_node = deps.add("Groups")
-    for g_name, group_cfg in manifest.package_groups.items():
+    groups_node = libs_root.add("Groups")
+    for g_name, group_cfg in manifest.library_groups.items():
         selection = group_cfg.get("selection", "none")
         strategy = group_cfg.get("strategy", "unknown")
         g_node = groups_node.add(f"{g_name} [dim]({strategy})[/dim]")
@@ -89,33 +103,29 @@ def cli_list():
             g_node.add(f"[green]{selection}[/green] {get_mode_str(selection)}")
             
     # Standalone
-    pkgs_node = deps.add("Standalone")
-    for p in manifest.packages:
-        name = p.get("name") if isinstance(p, dict) else p
+    pkgs_node = libs_root.add("Standalone")
+    for name in manifest.libraries:
         pkgs_node.add(f"{name} {get_mode_str(name)}")
 
-    # 2. Services (Containers)
-    services = tree.add("Services (Containers)")
+    # 2. Services
+    services_root = tree.add("Services")
     
     # Groups
-    c_groups_data = manifest.data.get("services", {}).get("container_groups", {})
-    c_groups_node = services.add("Groups")
-    for g_name, group_cfg in c_groups_data.items():
+    s_groups_node = services_root.add("Groups")
+    for g_name, group_cfg in manifest.service_groups.items():
         selection = group_cfg.get("selection", "none")
         strategy = group_cfg.get("strategy", "unknown")
-        g_node = c_groups_node.add(f"{g_name} [dim]({strategy})[/dim]")
+        g_node = s_groups_node.add(f"{g_name} [dim]({strategy})[/dim]")
         if isinstance(selection, (list, tuple)):
             for s in selection:
-                g_node.add(f"[green]{s}[/green] {get_mode_str(s)}")
+                g_node.add(f"[green]{s}[/green]{get_runtime_info(s)} {get_mode_str(s)}")
         else:
-            g_node.add(f"[green]{selection}[/green] {get_mode_str(selection)}")
+            g_node.add(f"[green]{selection}[/green]{get_runtime_info(selection)} {get_mode_str(selection)}")
             
     # Standalone
-    containers_data = manifest.data.get("services", {}).get("containers", [])
-    containers_node = services.add("Standalone")
-    for c in containers_data:
-        name = c.get("name") if isinstance(c, dict) else c
-        containers_node.add(f"{name} {get_mode_str(name)}")
+    standalone_node = services_root.add("Standalone")
+    for name in manifest.services:
+        standalone_node.add(f"{name}{get_runtime_info(name)} {get_mode_str(name)}")
 
     console.print(tree)
 

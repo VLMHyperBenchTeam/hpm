@@ -10,72 +10,72 @@ from .utils import (
     complete_project_containers
 )
 
-package_app = typer.Typer(help="Manage packages in the current project")
+library_app = typer.Typer(help="Manage libraries in the current project")
 group_app = typer.Typer(help="Manage groups in the current project")
-container_app = typer.Typer(help="Manage containers in the current project")
+service_app = typer.Typer(help="Manage services in the current project")
 python_manager_app = typer.Typer(help="Manage python package manager settings")
 
-# --- Project Package Commands ---
+# --- Project Library Commands ---
 
-@package_app.command(name="add")
-def project_package_add(
-    name: str = typer.Argument(..., help="Package name", autocompletion=complete_registry_packages),
+@library_app.command(name="add")
+def project_library_add(
+    name: str = typer.Argument(..., help="Library name", autocompletion=complete_registry_packages),
     group: Optional[str] = typer.Option(None, "--group", "-g"),
 ):
-    """Add a package to the project."""
+    """Add a library to the project."""
     hsm = HSMCore()
     try:
         if group:
-            hsm.add_package_group(group, name)
+            hsm.add_group(group, name)
         else:
-            hsm.add_package(name)
-        console.print(f"[green]Added package '{name}' to project. Run 'hsm sync' to apply.[/green]")
+            hsm.add_library(name)
+        console.print(f"[green]Added library '{name}' to project. Run 'hsm sync' to apply.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-@package_app.command(name="remove")
-def project_package_remove(
-    name: str = typer.Argument(..., help="Package name"),
+@library_app.command(name="remove")
+def project_library_remove(
+    name: str = typer.Argument(..., help="Library name"),
     group: Optional[str] = typer.Option(None, "--group", "-g"),
 ):
-    """Remove a package from the project."""
+    """Remove a library from the project."""
     hsm = HSMCore()
     try:
         if group:
-            hsm.remove_package_group(group, name)
+            hsm.remove_group_option(group, name)
         else:
-            hsm.remove_package(name)
-        console.print(f"[green]Removed package '{name}' from project. Run 'hsm sync' to apply.[/green]")
+            hsm.remove_library(name)
+        console.print(f"[green]Removed library '{name}' from project. Run 'hsm sync' to apply.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-@package_app.command(name="mode")
-def project_package_mode(
-    name: str = typer.Argument(..., help="Package name"),
+@library_app.command(name="mode")
+def project_library_mode(
+    name: str = typer.Argument(..., help="Library name"),
     mode: str = typer.Argument(..., help="Mode (dev/prod)"),
 ):
-    """Set mode for a specific package."""
+    """Set mode for a specific library."""
     hsm = HSMCore()
     try:
-        hsm.set_package_mode(name, mode)
+        hsm.set_mode(name, mode)
         console.print(f"[green]Mode for '{name}' set to {mode}. Run 'hsm sync' to apply.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-@package_app.command(name="init")
-def project_package_init(
-    name: str = typer.Argument(..., help="Package name"),
-    path: Optional[Path] = typer.Option(None, "--path", "-p", help="Path to create the package"),
+@library_app.command(name="init")
+def project_library_init(
+    name: str = typer.Argument(..., help="Library name"),
+    path: Optional[Path] = typer.Option(None, "--path", "-p", help="Path to create the library"),
     register: bool = typer.Option(True, "--register/--no-register", help="Automatically register in registry"),
 ):
-    """Initialize a new package in the project."""
+    """Initialize a new library in the project."""
     hsm = HSMCore()
     try:
-        hsm.init_package(name, path=path, register=register)
-        console.print(f"[green]Package '{name}' initialized successfully.[/green]")
+        hsm.init_library(name, path=path, register=register)
+        console.print(f"[green]Library '{name}' initialized successfully.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
@@ -90,7 +90,7 @@ def project_group_add(
     """Add a group to the project."""
     hsm = HSMCore()
     try:
-        hsm.add_package_group(name, option)
+        hsm.add_group(name, option)
         console.print(f"[green]Added group '{name}' with selection '{option}'. Run 'hsm sync' to apply.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -139,47 +139,49 @@ def project_group_remove_option(
 
 # --- Project Container Commands ---
 
-@container_app.command(name="add")
-def project_container_add(
-    name: str = typer.Argument(..., help="Container name", autocompletion=complete_registry_containers),
+@service_app.command(name="add")
+def project_service_add(
+    name: str = typer.Argument(..., help="Service name", autocompletion=complete_registry_containers),
     group: Optional[str] = typer.Option(None, "--group", "-g"),
 ):
-    """Add a container to the project."""
+    """Add a service to the project."""
     hsm = HSMCore()
     try:
         if group:
-            hsm.add_package_group(group, name)
+            hsm.add_group(group, name)
         else:
-            console.print("[yellow]Adding standalone containers is not fully supported yet. Please use groups.[/yellow]")
+            hsm.add_service(name)
+            console.print(f"[green]Added service '{name}' to project. Run 'hsm sync' to apply.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-@container_app.command(name="remove")
-def project_container_remove(
-    name: str = typer.Argument(..., help="Container name", autocompletion=complete_project_containers),
+@service_app.command(name="remove")
+def project_service_remove(
+    name: str = typer.Argument(..., help="Service name", autocompletion=complete_project_containers),
     group: Optional[str] = typer.Option(None, "--group", "-g"),
 ):
-    """Remove a container from the project."""
+    """Remove a service from the project."""
     hsm = HSMCore()
     try:
         if group:
-            hsm.remove_package_group(group, name)
+            hsm.remove_group_option(group, name)
         else:
-             console.print("[yellow]Removing standalone containers is not fully supported yet.[/yellow]")
+            hsm.remove_service(name)
+            console.print(f"[green]Removed service '{name}' from project. Run 'hsm sync' to apply.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-@container_app.command(name="mode")
-def project_container_mode(
-    name: str = typer.Argument(..., help="Container name", autocompletion=complete_project_containers),
+@service_app.command(name="mode")
+def project_service_mode(
+    name: str = typer.Argument(..., help="Service name", autocompletion=complete_project_containers),
     mode: str = typer.Argument(..., help="Mode (dev/prod)"),
 ):
-    """Set mode for a specific container."""
+    """Set mode for a specific service."""
     hsm = HSMCore()
     try:
-        hsm.set_package_mode(name, mode)
+        hsm.set_mode(name, mode)
         console.print(f"[green]Mode for '{name}' set to {mode}. Run 'hsm sync' to apply.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")

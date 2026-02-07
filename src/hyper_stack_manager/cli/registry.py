@@ -11,14 +11,14 @@ from .utils import console, complete_registry_packages, complete_registry_groups
 
 registry_app = typer.Typer(help="Manage the HSM global registry")
 
-package_app = typer.Typer(help="Manage packages in the registry")
-registry_app.add_typer(package_app, name="package")
+library_app = typer.Typer(help="Manage libraries in the registry")
+registry_app.add_typer(library_app, name="library")
 
 group_app = typer.Typer(help="Manage groups in the registry")
 registry_app.add_typer(group_app, name="group")
 
-container_app = typer.Typer(help="Manage containers in the registry")
-registry_app.add_typer(container_app, name="container")
+service_app = typer.Typer(help="Manage services in the registry")
+registry_app.add_typer(service_app, name="service")
 
 path_app = typer.Typer(help="Manage registry path configuration")
 registry_app.add_typer(path_app, name="path")
@@ -28,7 +28,7 @@ def registry_search(
     query: str = typer.Argument(..., help="Search query for components"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r", help="Path to the registry"),
 ):
-    """Search for packages, containers, and groups in the registry."""
+    """Search for libraries, services, and groups in the registry."""
     hsm = HSMCore(registry_path=registry)
     results = hsm.search_registry(query)
     
@@ -81,9 +81,9 @@ def registry_path_set(
     hsm.set_registry_path(path)
     console.print(f"[green]Registry path set to {path}[/green]")
 
-@package_app.command(name="add")
-def registry_package_add(
-    name: Optional[str] = typer.Argument(None, help="Package name"),
+@library_app.command(name="add")
+def registry_library_add(
+    name: Optional[str] = typer.Argument(None, help="Library name"),
     version: Optional[str] = typer.Option(None, "--version", "-v"),
     description: Optional[str] = typer.Option(None, "--description", "-d"),
     prod_type: Optional[str] = typer.Option(None, "--prod-type"),
@@ -92,12 +92,12 @@ def registry_package_add(
     no_input: bool = typer.Option(False, "--no-input", help="Disable interactive wizard"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
-    """Add a new package to the registry."""
+    """Add a new library to the registry."""
     hsm = HSMCore(registry_path=registry)
     try:
         if name is None:
             if no_input: raise typer.BadParameter("Name is required")
-            name = pt_prompt("Package Name: ")
+            name = pt_prompt("Library Name: ")
             if not name: raise typer.Exit(1)
         
         if no_input:
@@ -120,25 +120,25 @@ def registry_package_add(
             
         dev_source = {"type": "local", "path": dev_path, "editable": True} if dev_path else None
 
-        hsm.add_package_to_registry(name, version, description, prod_source, dev_source)
-        console.print(f"[green]Package '{name}' added to registry.[/green]")
+        hsm.add_library_to_registry(name, version, description, prod_source, dev_source)
+        console.print(f"[green]Library '{name}' added to registry.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-@package_app.command(name="remove")
-def registry_package_remove(
-    name: str = typer.Argument(..., help="Package name to remove", autocompletion=complete_registry_packages),
+@library_app.command(name="remove")
+def registry_library_remove(
+    name: str = typer.Argument(..., help="Library name to remove", autocompletion=complete_registry_packages),
     yes: bool = typer.Option(False, "--yes", "-y", help="Confirm without prompt"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
-    """Remove a package from the registry."""
-    if not yes and not typer.confirm(f"Are you sure you want to remove package '{name}' from registry?"):
+    """Remove a library from the registry."""
+    if not yes and not typer.confirm(f"Are you sure you want to remove library '{name}' from registry?"):
         raise typer.Abort()
     hsm = HSMCore(registry_path=registry)
     try:
         hsm.remove_from_registry(name)
-        console.print(f"[green]Package '{name}' removed from registry.[/green]")
+        console.print(f"[green]Library '{name}' removed from registry.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
@@ -162,13 +162,13 @@ def registry_group_add(
             if not name: raise typer.Exit(1)
             
         if no_input:
-            if group_type is None: group_type = "package_group"
+            if group_type is None: group_type = "library_group"
             if strategy is None: strategy = "1-of-N"
             if options is None: options = []
         else:
             if group_type is None:
-                group_type = pt_prompt("Group Type (package_group/container_group): ",
-                                       completer=WordCompleter(["package_group", "container_group"]), default="package_group")
+                group_type = pt_prompt("Group Type (library_group/service_group): ",
+                                       completer=WordCompleter(["library_group", "service_group"]), default="library_group")
             if strategy is None:
                 strategy = pt_prompt("Strategy (1-of-N/M-of-N): ",
                                      completer=WordCompleter(["1-of-N", "M-of-N"]), default="1-of-N")
@@ -231,9 +231,9 @@ def registry_group_remove_option(
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-@container_app.command(name="add")
-def registry_container_add(
-    name: Optional[str] = typer.Argument(None, help="Container name"),
+@service_app.command(name="add")
+def registry_service_add(
+    name: Optional[str] = typer.Argument(None, help="Service name"),
     image: Optional[str] = typer.Option(None, "--image"),
     build_path: Optional[str] = typer.Option(None, "--build-path"),
     dockerfile: Optional[str] = typer.Option(None, "--dockerfile"),
@@ -244,12 +244,12 @@ def registry_container_add(
     no_input: bool = typer.Option(False, "--no-input"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
-    """Add a new container to the registry."""
+    """Add a new service to the registry."""
     hsm = HSMCore(registry_path=registry)
     try:
         if name is None:
             if no_input: raise typer.BadParameter("Name is required")
-            name = pt_prompt("Container Name: ")
+            name = pt_prompt("Service Name: ")
             if not name: raise typer.Exit(1)
 
         if not no_input:
@@ -270,7 +270,7 @@ def registry_container_add(
         prod_source = {"type": "docker-image", "image": image} if image else None
         dev_source = {"type": "build", "path": build_path, "dockerfile": dockerfile} if build_path else None
 
-        hsm.add_container_to_registry(
+        hsm.add_service_to_registry(
             name=name,
             description=description,
             prod_source=prod_source,
@@ -279,24 +279,24 @@ def registry_container_add(
             volumes=volumes,
             env=env_dict
         )
-        console.print(f"[green]Container '{name}' added to registry.[/green]")
+        console.print(f"[green]Service '{name}' added to registry.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
 
-@container_app.command(name="remove")
-def registry_container_remove(
-    name: str = typer.Argument(..., help="Container name to remove", autocompletion=complete_registry_containers),
+@service_app.command(name="remove")
+def registry_service_remove(
+    name: str = typer.Argument(..., help="Service name to remove", autocompletion=complete_registry_containers),
     yes: bool = typer.Option(False, "--yes", "-y"),
     registry: Optional[Path] = typer.Option(None, "--registry", "-r"),
 ):
-    """Remove a container from the registry."""
-    if not yes and not typer.confirm(f"Are you sure you want to remove container '{name}'?"):
+    """Remove a service from the registry."""
+    if not yes and not typer.confirm(f"Are you sure you want to remove service '{name}'?"):
         raise typer.Abort()
     hsm = HSMCore(registry_path=registry)
     try:
         hsm.remove_from_registry(name)
-        console.print(f"[green]Container '{name}' removed from registry.[/green]")
+        console.print(f"[green]Service '{name}' removed from registry.[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(code=1)
