@@ -53,7 +53,8 @@ def test_case_1_implication_merging(runner, hsm_sandbox):
     runner.invoke(app, ["package", "add", "billing-service"])
 
     # 3. Sync
-    result = runner.invoke(app, ["sync"])
+    # Используем --no-verify, так как в песочнице мы проверяем логику резолвинга, а не реальное состояние системы
+    result = runner.invoke(app, ["sync", "--no-verify"])
     assert result.exit_code == 0
 
     # 4. Validate docker-compose.hsm.yml
@@ -122,7 +123,7 @@ def test_case_2_hybrid_cloud(runner, hsm_sandbox):
         yaml.dump(hsm_data, f)
 
     # 3. Sync
-    result = runner.invoke(app, ["sync"])
+    result = runner.invoke(app, ["sync", "--no-verify"])
     assert result.exit_code == 0
 
     # 4. Validate
@@ -179,7 +180,7 @@ def test_case_4_editable_stack(runner, hsm_sandbox):
     runner.invoke(app, ["container", "mode", "graph-builder-service", "dev"])
 
     # 4. Sync
-    result = runner.invoke(app, ["sync"])
+    result = runner.invoke(app, ["sync", "--no-verify"])
     assert result.exit_code == 0
 
     # 5. Validate
@@ -218,10 +219,7 @@ def test_case_5_secrets(runner, hsm_sandbox, monkeypatch):
     runner.invoke(app, ["group", "add", "graph-services", "--option", "graph-builder-service"])
 
     # 3. Sync
-    # We need to ensure SyncEngine handles env var interpolation.
-    # Looking at SyncEngine._resolve_container_config, it doesn't seem to do general env var interpolation,
-    # only HSM_MERGED_PARAMS.
-    result = runner.invoke(app, ["sync"])
+    result = runner.invoke(app, ["sync", "--no-verify"])
     assert result.exit_code == 0
 
     # 4. Validate
