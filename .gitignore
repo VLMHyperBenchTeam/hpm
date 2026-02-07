@@ -1,4 +1,9 @@
+# Ignore virtual envs
 .venv/
+
+# Ignore tests dir
+debug_tests/
+
 # Ignore all __pycache__ directories recursively
 **/__pycache__/
 *.py[cod]
