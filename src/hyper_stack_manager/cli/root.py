@@ -27,12 +27,25 @@ def init(
 @app.command()
 def sync(
     frozen: bool = typer.Option(False, "--frozen", help="Do not update dependencies, use lock file"),
+    verify: bool = typer.Option(True, "--verify/--no-verify", help="Verify environment after sync"),
 ):
     """Sync project state with the manifest."""
     hsm = HSMCore()
     try:
         hsm.sync(frozen=frozen)
         console.print("[green]Environment synced successfully.[/green]")
+        
+        if verify:
+            results = hsm.verify_sync_results()
+            if results["packages"]["status"] == "ok" and results["containers"]["status"] == "ok":
+                console.print("[bold green]Verification: OK[/bold green]")
+            else:
+                console.print("[bold yellow]Verification: Issues found![/bold yellow]")
+                if results["packages"]["missing"]:
+                    console.print(f"[red]Missing packages: {', '.join(results['packages']['missing'])}[/red]")
+                if results["containers"]["missing"]:
+                    console.print(f"[red]Missing containers: {', '.join(results['containers']['missing'])}[/red]")
+                    
     except Exception as e:
         console.print(f"[red]Sync failed: {e}[/red]")
         raise typer.Exit(code=1)

@@ -10,6 +10,7 @@ from ..adapters.base import BasePackageManagerAdapter, BaseContainerAdapter
 from .registry_manager import RegistryManager
 from .sync_engine import SyncEngine
 from .validator import Validator
+from .inspector import EnvironmentInspector
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class HSMCore:
             self.package_adapter, self.container_adapter
         )
         self.validator = Validator(self.manifest, self.registry_path)
+        self.inspector = EnvironmentInspector()
 
     def _get_package_adapter(self) -> BasePackageManagerAdapter:
         """Get the appropriate package manager adapter using entry points."""
@@ -81,9 +83,51 @@ class HSMCore:
             path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Ensured registry directory: {path}")
 
+        # Initialize package manager in root if needed
+        if not (self.project_root / "pyproject.toml").exists():
+            logger.info(f"Initializing package manager '{self.manifest.manager}' in project root")
+            self.package_adapter.init_project(self.project_root)
+
     def sync(self, frozen: bool = False):
         """Sync project state with the manifest."""
         self.sync_engine.sync(frozen=frozen)
+
+    def verify_sync_results(self) -> Dict[str, Any]:
+        """Verify that the current environment matches the manifest."""
+        logger.info("Verifying environment...")
+        results = {
+            "packages": {"status": "ok", "missing": [], "mismatch": []},
+            "containers": {"status": "ok", "missing": [], "not_running": []}
+        }
+
+        # 1. Verify Packages
+        installed = self.inspector.get_installed_packages(self.manifest.manager)
+        # Note: This is a simplified verification.
+        # In a real scenario, we'd resolve the full expected list.
+        # For now, we check if the explicitly requested packages are present.
+        for pkg_name in self.manifest.packages:
+            if pkg_name not in installed:
+                results["packages"]["missing"].append(pkg_name)
+                results["packages"]["status"] = "error"
+
+        # 2. Verify Containers
+        running = self.inspector.get_running_containers()
+        running_names = []
+        for c in running:
+            # Handle different docker compose ps formats
+            name = c.get("Service") or c.get("service") or c.get("Name") or c.get("name")
+            if name:
+                running_names.append(name)
+
+        # Check standalone containers
+        standalone_containers = self.manifest.data.get("services", {}).get("containers", [])
+        for cont in standalone_containers:
+            name = cont.get("name") if isinstance(cont, dict) else cont
+            if name not in running_names:
+                results["containers"]["missing"].append(name)
+                results["containers"]["status"] = "error"
+
+        return results
 
     def check(self):
         """Perform a dry-run validation."""
