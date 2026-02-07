@@ -77,7 +77,14 @@ class HSMProjectManifest:
         Returns:
             List of package names.
         """
-        return self.data.get("dependencies", {}).get("packages", [])
+        pkgs = self.data.get("dependencies", {}).get("packages", [])
+        result = []
+        for pkg in pkgs:
+            if isinstance(pkg, str):
+                result.append(pkg)
+            elif isinstance(pkg, dict) and "name" in pkg:
+                result.append(pkg["name"])
+        return result
 
     def add_package(self, name: str):
         """Add a standalone package to the manifest.

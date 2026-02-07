@@ -48,6 +48,11 @@ class PackageManifest(BaseModel):
     implies: Dict[str, Any] = Field(default_factory=dict)
     entrypoints: Dict[str, str] = Field(default_factory=dict)
 
+class DeploymentProfile(BaseModel):
+    mode: Literal["managed", "external"] = "managed"
+    external: Optional[Dict[str, Any]] = None
+    env: Dict[str, str] = Field(default_factory=dict)
+
 class ContainerManifest(BaseModel):
     name: str
     description: Optional[str] = None
@@ -59,3 +64,4 @@ class ContainerManifest(BaseModel):
     volumes: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
     sources: ManifestSources
+    deployment_profiles: Dict[str, DeploymentProfile] = Field(default_factory=dict)

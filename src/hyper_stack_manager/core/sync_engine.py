@@ -164,6 +164,30 @@ class SyncEngine:
             data = yaml.safe_load(f)
             manifest = ContainerManifest(**data)
         
+        # Check for profile in manifest
+        profile_name = None
+        # Check container groups
+        c_groups = self.manifest.data.get("services", {}).get("container_groups", {})
+        for g_cfg in c_groups.values():
+            selection = g_cfg.get("selection")
+            if selection == name or (isinstance(selection, (list, tuple)) and name in selection):
+                profile_name = g_cfg.get("profile")
+                break
+        
+        # Check standalone containers
+        if not profile_name:
+            containers = self.manifest.data.get("services", {}).get("containers", [])
+            for cont in containers:
+                if isinstance(cont, dict) and cont.get("name") == name:
+                    profile_name = cont.get("profile")
+                    break
+
+        if profile_name and profile_name in manifest.deployment_profiles:
+            profile = manifest.deployment_profiles[profile_name]
+            if profile.mode == "external":
+                logger.info(f"Container {name} is in external mode (profile: {profile_name}), skipping docker-compose.")
+                return None
+
         mode = self.manifest.get_package_mode(name)
         source = manifest.sources.dev if mode == "dev" and manifest.sources.dev else manifest.sources.prod
         
